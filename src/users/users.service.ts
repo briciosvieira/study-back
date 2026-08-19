@@ -8,6 +8,7 @@ import {
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+import { ListStudentsQueryDto } from '../courses/dto/list-students-query.dto';
 import { AddCoursesDto } from './dto/add-courses.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -117,14 +118,61 @@ export class UsersService {
     return { removed: true };
   }
 
-  // narrow, read-only listing so instructors can pick students for course
-  // visibility without needing full user-management access (admin-only)
-  findStudents() {
-    return this.prisma.user.findMany({
-      where: { role: Role.STUDENT, active: true },
-      select: { id: true, name: true, email: true },
-      orderBy: { name: 'asc' },
-    });
+  // Paginated/searchable STUDENT list for the admin "Students" area, each
+  // row carrying a small course preview (for the table's badge column) plus
+  // the real total — same CourseVisibility relation the course-side and
+  // per-user views already read from, just previewed here.
+  async getStudentsOverview(query: ListStudentsQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const search = query.search?.trim();
+
+    const where: Prisma.UserWhereInput = {
+      role: Role.STUDENT,
+      ...(search && {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+          { username: { contains: search, mode: 'insensitive' } },
+        ],
+      }),
+    };
+
+    const [total, users] = await this.prisma.$transaction([
+      this.prisma.user.count({ where }),
+      this.prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          username: true,
+          _count: { select: { visibilities: true } },
+          visibilities: {
+            take: 2,
+            orderBy: { assignedAt: 'desc' },
+            select: { course: { select: { id: true, title: true } } },
+          },
+        },
+        orderBy: { name: 'asc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+
+    return {
+      items: users.map((user) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        username: user.username,
+        totalCourses: user._count.visibilities,
+        courses: user.visibilities.map((v) => v.course),
+      })),
+      total,
+      page,
+      limit,
+    };
   }
 
   async create(dto: CreateUserDto) {

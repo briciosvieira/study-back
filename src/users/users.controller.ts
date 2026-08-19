@@ -12,6 +12,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { ParseUuidPipe } from '../common/pipes/parse-uuid.pipe';
+import { ListStudentsQueryDto } from '../courses/dto/list-students-query.dto';
 import { AddCoursesDto } from './dto/add-courses.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -28,10 +29,11 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
-  @Roles(Role.ADMIN, Role.INSTRUCTOR)
+  // admin-only: this feeds the dedicated "Students" management area, not
+  // the (now course-scoped) student picker used by instructors elsewhere
   @Get('students')
-  findStudents() {
-    return this.usersService.findStudents();
+  getStudentsOverview(@Query() query: ListStudentsQueryDto) {
+    return this.usersService.getStudentsOverview(query);
   }
 
   // must stay after the 'students' route above — otherwise Nest would match
