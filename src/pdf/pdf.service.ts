@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user';
-import { parseOrderLabel } from '../common/utils/ordering.util';
+import { nextOrderLabel, parseOrderLabel } from '../common/utils/ordering.util';
 import { ContentAccessService } from '../modules/content-access.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -47,14 +47,16 @@ export class PdfService {
       );
     }
 
+    const orderLabel = dto.orderLabel ?? (await this.nextOrderLabel(moduleId));
+
     return this.prisma.pdfItem.create({
       data: {
         moduleId,
         title: dto.title,
         fileKey: dto.key,
         fileUrl: this.storage.getPublicUrl(dto.key),
-        orderLabel: dto.orderLabel,
-        orderNum: parseOrderLabel(dto.orderLabel),
+        orderLabel,
+        orderNum: parseOrderLabel(orderLabel),
       },
     });
   }
@@ -93,5 +95,14 @@ export class PdfService {
       throw new NotFoundException('Module not found');
     }
     return targetModule;
+  }
+
+  private async nextOrderLabel(moduleId: string): Promise<string> {
+    const last = await this.prisma.pdfItem.findFirst({
+      where: { moduleId },
+      orderBy: { orderNum: 'desc' },
+      select: { orderNum: true },
+    });
+    return nextOrderLabel(last?.orderNum ?? null);
   }
 }

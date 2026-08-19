@@ -13,3 +13,10 @@ export function parseOrderLabel(orderLabel: string): number {
   }
   return parseFloat(orderLabel);
 }
+
+// Next whole-number label after whatever's already in the list — upload
+// forms don't ask the instructor to type an order, they just append; reorder
+// (which can still use "1.1"-style sub-levels) is a separate, explicit step.
+export function nextOrderLabel(maxOrderNum: number | null): string {
+  return String(Math.floor(maxOrderNum ?? 0) + 1);
+}

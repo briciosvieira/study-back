@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreatePdfItemDto {
   @ApiProperty()
@@ -14,7 +14,11 @@ export class CreatePdfItemDto {
   @MinLength(1)
   key: string;
 
-  @ApiProperty({ example: '1.1' })
+  @ApiPropertyOptional({
+    example: '1.1',
+    description: 'Omit to append automatically after the last item',
+  })
+  @IsOptional()
   @IsString()
-  orderLabel: string;
+  orderLabel?: string;
 }

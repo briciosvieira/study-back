@@ -14,9 +14,13 @@ export class CreateVideoItemDto {
   @MinLength(1)
   key: string;
 
-  @ApiProperty({ example: '1.1' })
+  @ApiPropertyOptional({
+    example: '1.1',
+    description: 'Omit to append automatically after the last item',
+  })
+  @IsOptional()
   @IsString()
-  orderLabel: string;
+  orderLabel?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
