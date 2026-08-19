@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  INSTRUCTOR
+  STUDENT
+}
+
+enum ModuleType {
+  PDF
+  VIDEO
+  QUIZ
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  username     String   @unique
+  passwordHash String
+  role         Role
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  coursesCreated Course[]           @relation("CourseCreator")
+  visibilities   CourseVisibility[]
+  attempts       QuizAttempt[]
+
+  @@map("users")
+}
+
+model Course {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  coverUrl    String?
+  active      Boolean  @default(true)
+  createdById String
+  createdBy   User     @relation("CourseCreator", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  modules      Module[]
+  visibilities CourseVisibility[]
+
+  @@map("courses")
+}
+
+// Defines which students a given course is visible to
+model CourseVisibility {
+  id       String @id @default(uuid())
+  courseId String
+  userId   String
+  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, userId])
+  @@map("course_visibilities")
+}
+
+model Module {
+  id        String     @id @default(uuid())
+  courseId  String
+  course    Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  type      ModuleType
+  title     String
+  coverUrl  String?
+  visible   Boolean    @default(true)
+  order     Float      @default(0) // orders modules within a course
+  createdAt DateTime   @default(now())
+
+  pdfItems   PdfItem[]
+  videoItems VideoItem[]
+  questions  Question[]
+  attempts   QuizAttempt[]
+
+  @@map("modules")
+}
+
+model PdfItem {
+  id         String   @id @default(uuid())
+  moduleId   String
+  module     Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title      String
+  fileUrl    String
+  fileKey    String // key in the S3/R2 bucket, used to delete later
+  sizeBytes  BigInt?
+  orderLabel String // "1", "1.1", "2" — shown in the UI
+  orderNum   Float // 1.0, 1.1, 2.0 — used for ORDER BY
+  createdAt  DateTime @default(now())
+
+  @@index([moduleId, orderNum])
+  @@map("pdf_items")
+}
+
+model VideoItem {
+  id          String   @id @default(uuid())
+  moduleId    String
+  module      Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title       String
+  fileUrl     String // streaming URL (Cloudflare Stream/Mux) or storage URL
+  fileKey     String?
+  durationSec Int?
+  orderLabel  String
+  orderNum    Float
+  createdAt   DateTime @default(now())
+
+  @@index([moduleId, orderNum])
+  @@map("video_items")
+}
+
+model Question {
+  id           String   @id @default(uuid())
+  moduleId     String
+  module       Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  statement    String
+  timeLimitSec Int      @default(205) // 3min25s
+  order        Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  options QuestionOption[]
+  answers AttemptAnswer[]
+
+  @@map("questions")
+}
+
+model QuestionOption {
+  id         String   @id @default(uuid())
+  questionId String
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  letter     String // A, B, C, D, E, F...
+  text       String
+  correct    Boolean  @default(false)
+
+  @@unique([questionId, letter])
+  @@map("question_options")
+}
+
+model QuizAttempt {
+  id           String    @id @default(uuid())
+  moduleId     String
+  module       Module    @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  totalCorrect Int?
+  totalWrong   Int?
+  totalTimeSec Int?
+  archived     Boolean   @default(false) // true once the student clicks "retry"
+
+  // current-question timer state — the server is always the source of truth for time
+  currentQuestionId      String?
+  currentQuestionShownAt DateTime?
+
+  answers AttemptAnswer[]
+
+  @@index([moduleId, userId, archived])
+  @@map("quiz_attempts")
+}
+
+model AttemptAnswer {
+  id           String      @id @default(uuid())
+  attemptId    String
+  attempt      QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId   String
+  question     Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  chosenOption String? // chosen letter, null if time ran out
+  correct      Boolean
+  timeSpentSec Int
+  answeredAt   DateTime    @default(now())
+
+  @@unique([attemptId, questionId])
+  @@map("attempt_answers")
+}
