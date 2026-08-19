@@ -57,15 +57,20 @@ model Course {
   @@map("courses")
 }
 
-// Defines which students a given course is visible to
+// Course enrollment: which students have access to a given course. Individual
+// rows, added/removed one at a time — never replaced wholesale (see
+// CoursesService.addStudents/removeStudent and UsersService.addCourses/removeCourse).
 model CourseVisibility {
-  id       String @id @default(uuid())
-  courseId String
-  userId   String
-  course   Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id         String   @id @default(uuid())
+  courseId   String
+  userId     String
+  assignedAt DateTime @default(now())
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([courseId, userId])
+  @@index([courseId])
+  @@index([userId])
   @@map("course_visibilities")
 }
 

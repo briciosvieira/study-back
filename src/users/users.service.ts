@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -7,6 +8,7 @@ import {
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
+import { AddCoursesDto } from './dto/add-courses.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
@@ -22,6 +24,14 @@ const PUBLIC_USER_SELECT = {
   createdAt: true,
 } satisfies Prisma.UserSelect;
 
+const COURSE_SUMMARY_SELECT = {
+  id: true,
+  title: true,
+  description: true,
+  coverUrl: true,
+  active: true,
+} satisfies Prisma.CourseSelect;
+
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -31,6 +41,80 @@ export class UsersService {
       select: PUBLIC_USER_SELECT,
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  async findOne(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: PUBLIC_USER_SELECT,
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+    return user;
+  }
+
+  // Courses this user currently has access to — same CourseVisibility
+  // relation the course-side "enrolled students" view reads from, just
+  // queried from the other direction.
+  async getCourses(userId: string) {
+    await this.findOneOrThrow(userId);
+    const rows = await this.prisma.courseVisibility.findMany({
+      where: { userId },
+      include: { course: { select: COURSE_SUMMARY_SELECT } },
+      orderBy: { assignedAt: 'desc' },
+    });
+    return rows.map((row) => ({ ...row.course, assignedAt: row.assignedAt }));
+  }
+
+  // Courses NOT yet assigned to this user, for the "add course" picker.
+  async getAvailableCourses(userId: string, search?: string) {
+    await this.findOneOrThrow(userId);
+    const trimmed = search?.trim();
+    return this.prisma.course.findMany({
+      where: {
+        visibilities: { none: { userId } },
+        ...(trimmed && { title: { contains: trimmed, mode: 'insensitive' } }),
+      },
+      select: COURSE_SUMMARY_SELECT,
+      orderBy: { title: 'asc' },
+    });
+  }
+
+  // Grants access via createMany+skipDuplicates — never touches this user's
+  // existing course access, same guarantee as CoursesService.addStudents.
+  async addCourses(userId: string, dto: AddCoursesDto) {
+    const user = await this.findOneOrThrow(userId);
+    if (user.role !== Role.STUDENT) {
+      throw new BadRequestException(
+        'Course access can only be granted to users with the STUDENT role',
+      );
+    }
+
+    const courses = await this.prisma.course.findMany({
+      where: { id: { in: dto.courseIds } },
+      select: { id: true },
+    });
+    if (courses.length !== dto.courseIds.length) {
+      throw new BadRequestException('One or more courseIds do not exist');
+    }
+
+    await this.prisma.courseVisibility.createMany({
+      data: dto.courseIds.map((courseId) => ({ courseId, userId })),
+      skipDuplicates: true,
+    });
+
+    return { added: dto.courseIds.length };
+  }
+
+  // Removes exactly one course's access — every other course this user has
+  // access to is untouched.
+  async removeCourse(userId: string, courseId: string) {
+    await this.findOneOrThrow(userId);
+    await this.prisma.courseVisibility.deleteMany({
+      where: { userId, courseId },
+    });
+    return { removed: true };
   }
 
   // narrow, read-only listing so instructors can pick students for course

@@ -6,7 +6,7 @@ import {
   Param,
   Patch,
   Post,
-  Put,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -19,8 +19,9 @@ import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { ParseUuidPipe } from '../common/pipes/parse-uuid.pipe';
 import { CoursesService } from './courses.service';
 import { MAX_COVER_SIZE_BYTES } from './course-cover-storage.service';
+import { AddStudentsDto } from './dto/add-students.dto';
 import { CreateCourseDto } from './dto/create-course.dto';
-import { SetVisibilityDto } from './dto/set-visibility.dto';
+import { ListStudentsQueryDto } from './dto/list-students-query.dto';
 import { UpdateCourseDto } from './dto/update-course.dto';
 
 @ApiTags('courses')
@@ -67,12 +68,39 @@ export class CoursesController {
   }
 
   @Roles(Role.ADMIN, Role.INSTRUCTOR)
-  @Put(':id/visibility')
-  setVisibility(
+  @Get(':id/students')
+  getStudents(
     @Param('id', ParseUuidPipe) id: string,
-    @Body() dto: SetVisibilityDto,
+    @Query() query: ListStudentsQueryDto,
   ) {
-    return this.coursesService.setVisibility(id, dto);
+    return this.coursesService.getEnrolledStudents(id, query);
+  }
+
+  @Roles(Role.ADMIN, Role.INSTRUCTOR)
+  @Get(':id/available-students')
+  getAvailableStudents(
+    @Param('id', ParseUuidPipe) id: string,
+    @Query() query: ListStudentsQueryDto,
+  ) {
+    return this.coursesService.getAvailableStudents(id, query);
+  }
+
+  @Roles(Role.ADMIN, Role.INSTRUCTOR)
+  @Post(':id/students')
+  addStudents(
+    @Param('id', ParseUuidPipe) id: string,
+    @Body() dto: AddStudentsDto,
+  ) {
+    return this.coursesService.addStudents(id, dto);
+  }
+
+  @Roles(Role.ADMIN, Role.INSTRUCTOR)
+  @Delete(':id/students/:userId')
+  removeStudent(
+    @Param('id', ParseUuidPipe) id: string,
+    @Param('userId', ParseUuidPipe) userId: string,
+  ) {
+    return this.coursesService.removeStudent(id, userId);
   }
 
   @Roles(Role.ADMIN, Role.INSTRUCTOR)
