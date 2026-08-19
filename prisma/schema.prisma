@@ -19,6 +19,11 @@ enum ModuleType {
   QUIZ
 }
 
+enum QuizAttemptStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
 model User {
   id           String   @id @default(uuid())
   name         String
@@ -138,26 +143,25 @@ model QuestionOption {
   text       String
   correct    Boolean  @default(false)
 
+  selectedBy AttemptAnswer[]
+
   @@unique([questionId, letter])
   @@map("question_options")
 }
 
 model QuizAttempt {
-  id           String    @id @default(uuid())
+  id           String            @id @default(uuid())
   moduleId     String
-  module       Module    @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  module       Module            @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   userId       String
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  startedAt    DateTime  @default(now())
-  finishedAt   DateTime?
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status       QuizAttemptStatus @default(IN_PROGRESS)
+  startedAt    DateTime          @default(now())
+  completedAt  DateTime?
   totalCorrect Int?
   totalWrong   Int?
   totalTimeSec Int?
-  archived     Boolean   @default(false) // true once the student clicks "retry"
-
-  // current-question timer state — the server is always the source of truth for time
-  currentQuestionId      String?
-  currentQuestionShownAt DateTime?
+  archived     Boolean           @default(false) // true once superseded by a retry
 
   answers AttemptAnswer[]
 
@@ -166,15 +170,29 @@ model QuizAttempt {
 }
 
 model AttemptAnswer {
-  id           String      @id @default(uuid())
-  attemptId    String
-  attempt      QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
-  questionId   String
-  question     Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  chosenOption String? // chosen letter, null if time ran out
-  correct      Boolean
-  timeSpentSec Int
-  answeredAt   DateTime    @default(now())
+  id         String      @id @default(uuid())
+  attemptId  String
+  attempt    QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  questionId String
+  question   Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  // FK, not a letter — set on submit, validated against the question it belongs to.
+  // SetNull so an instructor editing a question's options later can't be blocked
+  // by an old student answer still pointing at a deleted option row.
+  selectedOptionId String?
+  selectedOption   QuestionOption? @relation(fields: [selectedOptionId], references: [id], onDelete: SetNull)
+
+  // null while IN_PROGRESS — correctness is computed once, at finish() time only,
+  // so it never has to be withheld/filtered before that on the way out of the API
+  correct Boolean?
+
+  // set once, the first time the student ever opens this question — never reset
+  // on revisit, so the countdown survives reload/navigation without restarting
+  questionStartedAt DateTime?
+  // last time selectedOptionId was set (or cleared) — updated on every change
+  answeredAt        DateTime?
+  elapsedSeconds    Int?
+  overtimeSeconds   Int?
 
   @@unique([attemptId, questionId])
   @@map("attempt_answers")
