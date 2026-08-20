@@ -71,6 +71,10 @@ export class PolicyService {
       }),
     ]);
 
+    if (!activeVersion) {
+      throw new ForbiddenException('POLICY_NOT_CONFIGURED');
+    }
+
     return this.accountAccessService.resolve({
       active,
       acceptance: acceptance
@@ -83,8 +87,8 @@ export class PolicyService {
             reactivationRequestedAt: acceptance.reactivationRequestedAt,
           }
         : null,
-      activePolicyVersionId: activeVersion?.id ?? null,
-      requiresReacceptance: activeVersion?.requiresReacceptance ?? false,
+      activePolicyVersionId: activeVersion.id,
+      requiresReacceptance: activeVersion.requiresReacceptance,
     });
   }
 

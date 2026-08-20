@@ -40,7 +40,7 @@ export class AccountAccessService {
   resolve(input: AccountAccessInput): AccountAccessState {
     if (!input.active) return 'ACCOUNT_INACTIVE';
 
-    if (!input.activePolicyVersionId) return 'POLICY_ACCEPTED'; // no policy published — nothing to gate
+    if (!input.activePolicyVersionId) return 'POLICY_PENDING';
 
     if (!input.acceptance) return 'POLICY_PENDING';
 

@@ -6,6 +6,7 @@ import { StorageModule } from '../storage/storage.module';
 import { AccountAccessService } from './account-access.service';
 import { AccountDeletionService } from './account-deletion.service';
 import { PolicyAccountDeletionJob } from './policy-account-deletion.job';
+import { PolicyBootstrapService } from './policy-bootstrap.service';
 import { PolicyController } from './policy.controller';
 import { PolicyService } from './policy.service';
 
@@ -17,6 +18,7 @@ import { PolicyService } from './policy.service';
     AccountAccessService,
     AccountDeletionService,
     PolicyAccountDeletionJob,
+    PolicyBootstrapService,
   ],
   exports: [PolicyService, AccountAccessService, AccountDeletionService],
 })
