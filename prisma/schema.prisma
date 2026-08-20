@@ -29,25 +29,233 @@ enum StudySessionStatus {
   COMPLETED
 }
 
+enum PolicyAcceptanceStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+// Minimal, reusable grant system — deliberately not a full RBAC engine.
+// ADMIN gets both implicitly via role check (never stored, never revocable
+// by another admin); this is only for granting them to INSTRUCTOR/STUDENT.
+enum Permission {
+  VIEW_AUDIT_LOGS
+  EXPORT_AUDIT_LOGS
+  MANAGE_POLICY_REACTIVATION
+}
+
 model User {
-  id                 String   @id @default(uuid())
+  id                 String       @id @default(uuid())
   name               String
-  email              String   @unique
-  username           String   @unique
+  email              String       @unique
+  username           String       @unique
   passwordHash       String
   role               Role
-  active             Boolean  @default(true)
+  active             Boolean      @default(true)
   avatarStorageKey   String? // opaque R2 object key (avatars/<uuid>-avatar.<ext>) — never derived from name/email
-  mustChangePassword Boolean  @default(false) // set true when an admin/instructor resets someone else's password
-  createdAt          DateTime @default(now())
+  mustChangePassword Boolean      @default(false) // set true when an admin/instructor resets someone else's password
+  permissions        Permission[] @default([]) // grants beyond role defaults — ADMIN's own access is role-based, never stored here
+  createdAt          DateTime     @default(now())
 
-  coursesCreated    Course[]              @relation("CourseCreator")
+  coursesCreated    Course[]               @relation("CourseCreator")
   visibilities      CourseVisibility[]
   attempts          QuizAttempt[]
   studySessions     StudySession[]
   uploadedTemplates TemplateLibraryFile[]
+  policyAcceptances UserPolicyAcceptance[]
 
   @@map("users")
+}
+
+// Immutable once published — editing a policy's text means publishing a new
+// version, never mutating an existing row. isActive marks the single
+// currently-presented version; requiresReacceptance controls whether users
+// who accepted an older version must accept this one again (see
+// AccountAccessService).
+model PolicyVersion {
+  id                   String   @id @default(uuid())
+  version              String   @unique
+  title                String
+  content              String
+  isActive             Boolean  @default(false)
+  requiresReacceptance Boolean  @default(false)
+  publishedAt          DateTime
+  createdAt            DateTime @default(now())
+
+  acceptances UserPolicyAcceptance[]
+
+  @@index([isActive])
+  @@map("policy_versions")
+}
+
+// One row per user tracking their current decision on the policy — this is
+// the source of truth for access control (never AuditEvent, which is
+// retention-limited to 30 days and must not gate login). A user's *history*
+// of decisions across versions isn't modeled here; only the latest decision
+// matters for access, and prior decisions remain visible via AuditEvent for
+// as long as that 30-day window lasts.
+model UserPolicyAcceptance {
+  id              String                 @id @default(uuid())
+  userId          String
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  policyVersionId String
+  policyVersion   PolicyVersion          @relation(fields: [policyVersionId], references: [id])
+  status          PolicyAcceptanceStatus @default(PENDING)
+
+  acceptedAt DateTime?
+  rejectedAt DateTime?
+
+  // reconsideration deadline — set once on rejection, never reset by a
+  // later login; null while ACCEPTED/PENDING or while paused below
+  scheduledDeletionAt DateTime?
+
+  // set only while an ADMIN has isActive=false on this user during an
+  // active rejection countdown — the remaining time is preserved here and
+  // scheduledDeletionAt is cleared, so the countdown can't run out while the
+  // user is administratively blocked from reconsidering
+  deletionPausedAt         DateTime?
+  deletionRemainingSeconds Int?
+
+  // Consolidated-account review hold (accounts >= ESTABLISHED_ACCOUNT_DAYS
+  // old) — a completely separate mechanism from scheduledDeletionAt above.
+  // While policyReviewUntil is set, this account never auto-deletes; only an
+  // explicit admin decision (approve/deny reactivation, or manual delete)
+  // clears it. reactivationRequestedAt is set when the user re-accepts
+  // during the hold, but that alone never restores access — see
+  // PolicyService.accept()/approveReactivation().
+  policyReviewStartedAt   DateTime?
+  policyReviewUntil       DateTime?
+  reactivationRequestedAt DateTime?
+  reactivatedAt           DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, policyVersionId])
+  @@index([userId])
+  @@index([status])
+  @@index([scheduledDeletionAt])
+  @@index([policyReviewUntil])
+  @@map("user_policy_acceptances")
+}
+
+// HMAC of a normalized email, never the email itself in the unique/lookup
+// column — see EmailEligibilityService. Soft-removable: removedAt != null
+// means an ADMIN cleared the block and the address is eligible again.
+model EmailBlocklist {
+  id          String  @id @default(uuid())
+  emailHash   String  @unique
+  maskedEmail String?
+  reason      String
+
+  createdAt   DateTime  @default(now())
+  removedAt   DateTime?
+  removedById String?
+
+  @@index([removedAt])
+  @@map("email_blocklist")
+}
+
+// Append-only — no update/delete path exists anywhere in the app. Never
+// cascades from User: a deleted user's events must remain queryable for the
+// rest of the 30-day retention window, so actor/target are plain historical
+// strings, not live foreign keys.
+model AuditEvent {
+  id        String @id @default(uuid())
+  eventType String
+  category  String
+  severity  String
+
+  actorUserId String?
+  actorName   String?
+
+  targetUserId      String?
+  targetName        String?
+  targetEmailMasked String?
+
+  resourceType String?
+  resourceId   String?
+
+  method     String?
+  route      String?
+  httpStatus Int?
+
+  ipAddress String?
+  userAgent String?
+  requestId String?
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([eventType])
+  @@index([category])
+  @@index([severity])
+  @@index([actorUserId])
+  @@index([httpStatus])
+  @@map("audit_events")
+}
+
+// An aggregated, deduplicated view over a burst of related AuditEvents —
+// repeated occurrences within SECURITY_INCIDENT_WINDOW_SECONDS increment the
+// same row instead of creating a new one (see SecurityIncidentService).
+model SecurityIncident {
+  id       String @id @default(uuid())
+  type     String
+  severity String
+
+  userId    String?
+  ipAddress String?
+
+  route  String?
+  method String?
+
+  occurrenceCount Int @default(1)
+
+  firstOccurredAt DateTime
+  lastOccurredAt  DateTime
+
+  createdAt DateTime @default(now())
+
+  notifications AuditNotification[]
+
+  @@index([createdAt])
+  @@index([severity])
+  @@index([type])
+  @@map("security_incidents")
+}
+
+// Per-viewer read state for an incident — never a single boolean on the
+// incident itself, since each ADMIN/auditor tracks their own unread state.
+model AuditNotification {
+  id         String           @id @default(uuid())
+  userId     String
+  incidentId String
+  incident   SecurityIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  readAt           DateTime?
+  popupDismissedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, incidentId])
+  @@index([userId])
+  @@map("audit_notifications")
+}
+
+// One row per successfully-archived UTC day — the retention job checks this
+// before deleting that day's AuditEvent rows from Postgres, so a failed R2
+// upload can never silently take the only copy of a day's events with it.
+model AuditArchiveLog {
+  id          String   @id @default(uuid())
+  archiveDate DateTime
+  eventCount  Int
+  storageKey  String
+  createdAt   DateTime @default(now())
+
+  @@unique([archiveDate])
+  @@map("audit_archive_logs")
 }
 
 model Course {
@@ -58,8 +266,11 @@ model Course {
   targetAudience String? // who this course is for, shown on the overview tab
   coverUrl       String?
   active         Boolean  @default(true)
-  createdById    String
-  createdBy      User     @relation("CourseCreator", fields: [createdById], references: [id])
+  // nullable so a deleted instructor/admin account never blocks or orphans
+  // the course they created — content they authored is shared, not personal
+  // data, and must survive their account being permanently deleted
+  createdById    String?
+  createdBy      User?    @relation("CourseCreator", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt      DateTime @default(now())
 
   modules       Module[]
@@ -256,8 +467,10 @@ model TemplateLibraryFile {
   storageKey   String
   mimeType     String
   fileSize     Int
-  uploadedById String
-  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  // nullable so a deleted admin/instructor account never blocks or orphans
+  // a template they uploaded — same reasoning as Course.createdById
+  uploadedById String?
+  uploadedBy   User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

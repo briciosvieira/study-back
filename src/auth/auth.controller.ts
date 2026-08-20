@@ -5,13 +5,16 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Req,
   Res,
   UseGuards,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { getClientIp, getRequestId } from '../common/utils/request-context.util';
+import { AllowWithoutPolicyAcceptance } from '../policy/decorators/policy-exempt.decorator';
 import { parseDurationToMs } from '../common/utils/duration.util';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -37,9 +40,14 @@ export class AuthController {
   @ApiOperation({ summary: 'Log in with email or username' })
   async login(
     @Body() dto: LoginDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const user = await this.authService.validateUser(dto.login, dto.password);
+    const user = await this.authService.validateUser(dto.login, dto.password, {
+      ipAddress: getClientIp(req),
+      userAgent: req.headers['user-agent'] ?? null,
+      requestId: getRequestId(req) ?? null,
+    });
     const tokens = this.authService.issueTokens(user);
     this.setRefreshCookie(res, tokens.refreshToken);
     return { accessToken: tokens.accessToken, user };
@@ -61,6 +69,7 @@ export class AuthController {
     return { accessToken: tokens.accessToken };
   }
 
+  @AllowWithoutPolicyAcceptance()
   @HttpCode(HttpStatus.OK)
   @Post('logout')
   logout(@Res({ passthrough: true }) res: Response) {
@@ -68,6 +77,7 @@ export class AuthController {
     return { loggedOut: true };
   }
 
+  @AllowWithoutPolicyAcceptance()
   @Get('me')
   me(@CurrentUser() user: AuthenticatedUser) {
     return user;

@@ -52,7 +52,7 @@ export class CoursesController {
   @Roles(Role.ADMIN, Role.INSTRUCTOR)
   @Post()
   create(@Body() dto: CreateCourseDto, @CurrentUser() user: AuthenticatedUser) {
-    return this.coursesService.create(dto, user.id);
+    return this.coursesService.create(dto, user);
   }
 
   @Roles(Role.ADMIN, Role.INSTRUCTOR)
@@ -63,8 +63,8 @@ export class CoursesController {
 
   @Roles(Role.ADMIN)
   @Delete(':id')
-  remove(@Param('id', ParseUuidPipe) id: string) {
-    return this.coursesService.remove(id);
+  remove(@Param('id', ParseUuidPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.coursesService.remove(id, user);
   }
 
   @Roles(Role.ADMIN, Role.INSTRUCTOR)

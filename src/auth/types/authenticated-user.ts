@@ -1,5 +1,6 @@
-import { Role, User } from '@prisma/client';
+import { Permission, Role, User } from '@prisma/client';
 import { buildAvatarUrl } from '../../common/utils/avatar-url.util';
+import type { AccountAccessState } from '../../policy/account-access.service';
 
 export interface AuthenticatedUser {
   id: string;
@@ -10,14 +11,18 @@ export interface AuthenticatedUser {
   active: boolean;
   mustChangePassword: boolean;
   avatarUrl: string | null;
+  accessState: AccountAccessState;
+  permissions: Permission[];
 }
 
 // avatarPublicUrl is the same storage.publicUrl config value StorageService
-// uses — plumbed in explicitly so this stays a pure function callable from
-// the passport strategies without pulling in the whole storage module.
+// uses, and accessState is PolicyService.resolveAccessState()'s output —
+// both plumbed in explicitly so this stays a pure function callable from the
+// passport strategies without pulling in the storage/policy modules here.
 export function toAuthenticatedUser(
   user: User,
   avatarPublicUrl: string,
+  accessState: AccountAccessState,
 ): AuthenticatedUser {
   return {
     id: user.id,
@@ -28,5 +33,7 @@ export function toAuthenticatedUser(
     active: user.active,
     mustChangePassword: user.mustChangePassword,
     avatarUrl: buildAvatarUrl(user.avatarStorageKey, avatarPublicUrl),
+    accessState,
+    permissions: user.permissions,
   };
 }

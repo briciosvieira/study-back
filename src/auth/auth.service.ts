@@ -7,7 +7,12 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import type { StringValue } from 'ms';
+import { AuditService } from '../audit/audit.service';
+import { markAudited } from '../audit/audited-exception.util';
+import { maskEmail, normalizeEmail } from '../common/utils/normalize-email.util';
+import { PolicyService } from '../policy/policy.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SecurityIncidentService } from '../security/security-incident.service';
 import type { AuthenticatedUser } from './types/authenticated-user';
 import { toAuthenticatedUser } from './types/authenticated-user';
 
@@ -16,17 +21,27 @@ export interface TokenPair {
   refreshToken: string;
 }
 
+export interface LoginRequestContext {
+  ipAddress: string | null;
+  userAgent: string | null;
+  requestId: string | null;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly policyService: PolicyService,
+    private readonly auditService: AuditService,
+    private readonly securityIncidentService: SecurityIncidentService,
   ) {}
 
   async validateUser(
     login: string,
     password: string,
+    context: LoginRequestContext,
   ): Promise<AuthenticatedUser> {
     const user = await this.prisma.user.findFirst({
       where: { OR: [{ email: login }, { username: login }] },
@@ -37,21 +52,66 @@ export class AuthService {
     // already know the real password — only a correct password reveals that
     // the account itself is the thing blocking access
     if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
+      await this.auditService.record({
+        eventType: 'LOGIN_FAILED',
+        category: 'AUTHENTICATION',
+        severity: 'INFO',
+        targetEmailMasked: login.includes('@') ? maskEmail(normalizeEmail(login)) : null,
+        ...this.contextFields(context),
+      });
+      await this.securityIncidentService.trackFailure({
+        type: 'REPEATED_LOGIN_FAILURE',
+        key: context.ipAddress ?? 'unknown',
+        ipAddress: context.ipAddress,
+      });
+      throw markAudited(new UnauthorizedException('Invalid credentials'));
     }
 
     const passwordMatches = await bcrypt.compare(password, user.passwordHash);
     if (!passwordMatches) {
-      throw new UnauthorizedException('Invalid credentials');
+      await this.auditService.record({
+        eventType: 'INVALID_PASSWORD',
+        category: 'AUTHENTICATION',
+        severity: 'INFO',
+        actorUserId: user.id,
+        actorName: user.name,
+        ...this.contextFields(context),
+      });
+      await this.securityIncidentService.trackFailure({
+        type: 'REPEATED_LOGIN_FAILURE',
+        key: user.id,
+        userId: user.id,
+        ipAddress: context.ipAddress,
+      });
+      throw markAudited(new UnauthorizedException('Invalid credentials'));
     }
 
     if (!user.active) {
-      throw new ForbiddenException(
-        'Account deactivated. Contact an administrator.',
+      await this.auditService.record({
+        eventType: 'ACCOUNT_INACTIVE',
+        category: 'AUTHENTICATION',
+        severity: 'INFO',
+        actorUserId: user.id,
+        actorName: user.name,
+        ...this.contextFields(context),
+      });
+      throw markAudited(
+        new ForbiddenException('Account deactivated. Contact an administrator.'),
       );
     }
 
-    return toAuthenticatedUser(user, this.avatarPublicUrl());
+    const accessState = await this.policyService.resolveAccessState(user.id, user.active);
+
+    await this.auditService.record({
+      eventType: 'LOGIN_SUCCEEDED',
+      category: 'AUTHENTICATION',
+      severity: 'INFO',
+      actorUserId: user.id,
+      actorName: user.name,
+      ...this.contextFields(context),
+    });
+
+    return toAuthenticatedUser(user, this.avatarPublicUrl(), accessState);
   }
 
   issueTokens(user: AuthenticatedUser): TokenPair {
@@ -72,6 +132,14 @@ export class AuthService {
           ),
         },
       ),
+    };
+  }
+
+  private contextFields(context: LoginRequestContext) {
+    return {
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+      requestId: context.requestId,
     };
   }
 

@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { AuditService } from '../audit/audit.service';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { nextOrderLabel, parseOrderLabel } from '../common/utils/ordering.util';
 import { ContentAccessService } from '../modules/content-access.service';
@@ -18,6 +19,7 @@ export class PdfService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly contentAccess: ContentAccessService,
+    private readonly auditService: AuditService,
   ) {}
 
   async findAllForModule(moduleId: string, user: AuthenticatedUser) {
@@ -37,7 +39,7 @@ export class PdfService {
     });
   }
 
-  async create(moduleId: string, dto: CreatePdfItemDto) {
+  async create(moduleId: string, dto: CreatePdfItemDto, actor: AuthenticatedUser) {
     await this.findModuleOrThrow(moduleId);
 
     const exists = await this.storage.objectExists(dto.key);
@@ -49,7 +51,7 @@ export class PdfService {
 
     const orderLabel = dto.orderLabel ?? (await this.nextOrderLabel(moduleId));
 
-    return this.prisma.pdfItem.create({
+    const item = await this.prisma.pdfItem.create({
       data: {
         moduleId,
         title: dto.title,
@@ -59,12 +61,31 @@ export class PdfService {
         orderNum: parseOrderLabel(orderLabel),
       },
     });
+    await this.auditService.record({
+      eventType: 'RESOURCE_CREATED',
+      category: 'CONTENT',
+      severity: 'INFO',
+      actorUserId: actor.id,
+      actorName: actor.name,
+      resourceType: 'PDF',
+      resourceId: item.id,
+    });
+    return item;
   }
 
-  async remove(id: string) {
+  async remove(id: string, actor: AuthenticatedUser) {
     const item = await this.findOrThrow(id);
     await this.storage.delete(item.fileKey);
     await this.prisma.pdfItem.delete({ where: { id } });
+    await this.auditService.record({
+      eventType: 'RESOURCE_DELETED',
+      category: 'CONTENT',
+      severity: 'INFO',
+      actorUserId: actor.id,
+      actorName: actor.name,
+      resourceType: 'PDF',
+      resourceId: id,
+    });
     return { deleted: true };
   }
 

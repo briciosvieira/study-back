@@ -18,6 +18,8 @@ import { ListStudentsQueryDto } from '../courses/dto/list-students-query.dto';
 import { AddCoursesDto } from './dto/add-courses.dto';
 import { AdminResetPasswordDto } from './dto/admin-reset-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
+import { DeleteUserDto } from './dto/delete-user.dto';
+import { SetPermissionDto } from './dto/set-permission.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
 
@@ -44,6 +46,11 @@ export class UsersController {
   @Get(':id')
   findOne(@Param('id', ParseUuidPipe) id: string) {
     return this.usersService.findOne(id);
+  }
+
+  @Get(':id/policy-status')
+  getPolicyStatus(@Param('id', ParseUuidPipe) id: string) {
+    return this.usersService.getPolicyStatus(id);
   }
 
   @Get(':id/courses')
@@ -76,8 +83,8 @@ export class UsersController {
   }
 
   @Post()
-  create(@Body() dto: CreateUserDto) {
-    return this.usersService.create(dto);
+  create(@Body() dto: CreateUserDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.usersService.create(dto, user);
   }
 
   @Patch(':id')
@@ -102,8 +109,23 @@ export class UsersController {
     return this.usersService.resetPassword(id, dto, user);
   }
 
+  // ADMIN-only, backend-enforced regardless of target role — see
+  // UsersService.setPermission for the "cannot touch an admin" guard.
+  @Patch(':id/permissions')
+  setPermission(
+    @Param('id', ParseUuidPipe) id: string,
+    @Body() dto: SetPermissionDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.usersService.setPermission(id, dto.permission, dto.grant, user);
+  }
+
   @Delete(':id')
-  remove(@Param('id', ParseUuidPipe) id: string) {
-    return this.usersService.remove(id);
+  remove(
+    @Param('id', ParseUuidPipe) id: string,
+    @Body() dto: DeleteUserDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.usersService.remove(id, dto, user);
   }
 }

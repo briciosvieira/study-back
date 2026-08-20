@@ -18,9 +18,16 @@ export interface StorageProvider {
     downloadFileName: string;
   }): Promise<string>;
 
+  putObject(params: {
+    key: string;
+    body: Buffer;
+    contentType: string;
+    bucket?: string;
+  }): Promise<void>;
+
   objectExists(key: string): Promise<boolean>;
 
-  delete(key: string): Promise<void>;
+  delete(key: string, bucket?: string): Promise<void>;
 
   getPublicUrl(key: string): string;
 }

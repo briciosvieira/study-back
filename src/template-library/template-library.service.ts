@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -24,6 +25,7 @@ export class TemplateLibraryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly auditService: AuditService,
   ) {}
 
   async presignUpload(dto: PresignTemplateUploadDto) {
@@ -35,7 +37,7 @@ export class TemplateLibraryService {
     });
   }
 
-  async create(dto: CreateTemplateDto, uploadedById: string) {
+  async create(dto: CreateTemplateDto, actor: AuthenticatedUser) {
     this.assertAllowedExtension(dto.originalName);
 
     if (dto.fileSize > TEMPLATE_LIBRARY_MAX_FILE_SIZE_BYTES) {
@@ -51,7 +53,7 @@ export class TemplateLibraryService {
       );
     }
 
-    return this.prisma.templateLibraryFile.create({
+    const file = await this.prisma.templateLibraryFile.create({
       data: {
         name: dto.name,
         description: dto.description,
@@ -59,9 +61,19 @@ export class TemplateLibraryService {
         storageKey: dto.key,
         mimeType: dto.mimeType,
         fileSize: dto.fileSize,
-        uploadedById,
+        uploadedById: actor.id,
       },
     });
+    await this.auditService.record({
+      eventType: 'RESOURCE_CREATED',
+      category: 'CONTENT',
+      severity: 'INFO',
+      actorUserId: actor.id,
+      actorName: actor.name,
+      resourceType: 'TEMPLATE',
+      resourceId: file.id,
+    });
+    return file;
   }
 
   async findAll(query: ListTemplatesQueryDto) {
@@ -113,10 +125,19 @@ export class TemplateLibraryService {
   // ADMIN-only at the controller level — re-validated here regardless of the
   // guard, and the R2 delete is awaited before the Postgres row is removed so
   // a storage failure aborts the whole operation instead of faking success.
-  async remove(id: string) {
+  async remove(id: string, actor: AuthenticatedUser) {
     const file = await this.findOrThrow(id);
     await this.storage.delete(file.storageKey);
     await this.prisma.templateLibraryFile.delete({ where: { id } });
+    await this.auditService.record({
+      eventType: 'RESOURCE_DELETED',
+      category: 'CONTENT',
+      severity: 'INFO',
+      actorUserId: actor.id,
+      actorName: actor.name,
+      resourceType: 'TEMPLATE',
+      resourceId: id,
+    });
     return { deleted: true };
   }
 

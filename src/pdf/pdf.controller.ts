@@ -45,14 +45,15 @@ export class PdfController {
   create(
     @Param('moduleId', ParseUuidPipe) moduleId: string,
     @Body() dto: CreatePdfItemDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.pdfService.create(moduleId, dto);
+    return this.pdfService.create(moduleId, dto, user);
   }
 
   @Roles(Role.ADMIN)
   @Delete('pdf/:id')
-  remove(@Param('id', ParseUuidPipe) id: string) {
-    return this.pdfService.remove(id);
+  remove(@Param('id', ParseUuidPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.pdfService.remove(id, user);
   }
 
   @Roles(Role.ADMIN, Role.INSTRUCTOR)

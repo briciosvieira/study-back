@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { PolicyService } from '../../policy/policy.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { toAuthenticatedUser } from '../types/authenticated-user';
 
@@ -14,6 +15,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly policyService: PolicyService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -29,9 +31,11 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     if (!user || !user.active) {
       throw new UnauthorizedException('User not found or inactive');
     }
+    const accessState = await this.policyService.resolveAccessState(user.id, user.active);
     return toAuthenticatedUser(
       user,
       this.configService.get<string>('storage.publicUrl')!,
+      accessState,
     );
   }
 }

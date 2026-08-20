@@ -4,6 +4,10 @@ import { APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import type { StringValue } from 'ms';
+import { AuditModule } from '../audit/audit.module';
+import { PolicyModule } from '../policy/policy.module';
+import { PolicyAccountGuard } from '../policy/guards/policy-account.guard';
+import { SecurityModule } from '../security/security.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -23,13 +27,18 @@ import { JwtStrategy } from './strategies/jwt.strategy';
         },
       }),
     }),
+    AuditModule,
+    SecurityModule,
+    PolicyModule,
   ],
   controllers: [AuthController],
   providers: [
     AuthService,
     JwtStrategy,
     JwtRefreshStrategy,
+    // Order matters: Authentication -> isActive/Policy -> Role/Permission.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: PolicyAccountGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
   exports: [AuthService],

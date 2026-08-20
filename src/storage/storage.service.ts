@@ -76,6 +76,26 @@ export class StorageService implements StorageProvider {
     });
   }
 
+  // Direct server-side upload with a fully-controlled key (no random UUID
+  // prefix, unlike presignUpload) and an optional bucket override — used by
+  // the audit archive job to write to a separate, genuinely private bucket
+  // when one is configured.
+  async putObject(params: {
+    key: string;
+    body: Buffer;
+    contentType: string;
+    bucket?: string;
+  }): Promise<void> {
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: params.bucket ?? this.bucket,
+        Key: params.key,
+        Body: params.body,
+        ContentType: params.contentType,
+      }),
+    );
+  }
+
   async objectExists(key: string): Promise<boolean> {
     try {
       await this.client.send(
@@ -87,9 +107,9 @@ export class StorageService implements StorageProvider {
     }
   }
 
-  async delete(key: string): Promise<void> {
+  async delete(key: string, bucket?: string): Promise<void> {
     await this.client.send(
-      new DeleteObjectCommand({ Bucket: this.bucket, Key: key }),
+      new DeleteObjectCommand({ Bucket: bucket ?? this.bucket, Key: key }),
     );
   }
 

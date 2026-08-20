@@ -45,14 +45,15 @@ export class VideoController {
   create(
     @Param('moduleId', ParseUuidPipe) moduleId: string,
     @Body() dto: CreateVideoItemDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.videoService.create(moduleId, dto);
+    return this.videoService.create(moduleId, dto, user);
   }
 
   @Roles(Role.ADMIN)
   @Delete('video/:id')
-  remove(@Param('id', ParseUuidPipe) id: string) {
-    return this.videoService.remove(id);
+  remove(@Param('id', ParseUuidPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.videoService.remove(id, user);
   }
 
   @Roles(Role.ADMIN, Role.INSTRUCTOR)

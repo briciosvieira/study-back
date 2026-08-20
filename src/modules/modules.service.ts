@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { CoursesService } from '../courses/courses.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,6 +13,7 @@ export class ModulesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly coursesService: CoursesService,
+    private readonly auditService: AuditService,
   ) {}
 
   async findAllForCourse(courseId: string, user: AuthenticatedUser) {
@@ -27,9 +29,9 @@ export class ModulesService {
     });
   }
 
-  async create(courseId: string, dto: CreateModuleDto) {
+  async create(courseId: string, dto: CreateModuleDto, actor: AuthenticatedUser) {
     await this.findCourseOrThrow(courseId);
-    return this.prisma.module.create({
+    const created = await this.prisma.module.create({
       data: {
         courseId,
         type: dto.type,
@@ -38,6 +40,17 @@ export class ModulesService {
         studyPriority: dto.studyPriority,
       },
     });
+    await this.auditService.record({
+      eventType: 'RESOURCE_CREATED',
+      category: 'CONTENT',
+      severity: 'INFO',
+      actorUserId: actor.id,
+      actorName: actor.name,
+      resourceType: 'MODULE',
+      resourceId: created.id,
+      metadata: { moduleType: created.type },
+    });
+    return created;
   }
 
   async update(id: string, dto: UpdateModuleDto) {
@@ -54,9 +67,18 @@ export class ModulesService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: string, actor: AuthenticatedUser) {
     await this.findOrThrow(id);
     await this.prisma.module.delete({ where: { id } });
+    await this.auditService.record({
+      eventType: 'RESOURCE_DELETED',
+      category: 'CONTENT',
+      severity: 'INFO',
+      actorUserId: actor.id,
+      actorName: actor.name,
+      resourceType: 'MODULE',
+      resourceId: id,
+    });
     return { deleted: true };
   }
 

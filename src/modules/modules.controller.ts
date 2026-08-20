@@ -36,8 +36,9 @@ export class ModulesController {
   create(
     @Param('courseId', ParseUuidPipe) courseId: string,
     @Body() dto: CreateModuleDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.modulesService.create(courseId, dto);
+    return this.modulesService.create(courseId, dto, user);
   }
 
   @Roles(Role.ADMIN, Role.INSTRUCTOR)
@@ -48,8 +49,8 @@ export class ModulesController {
 
   @Roles(Role.ADMIN)
   @Delete('modules/:id')
-  remove(@Param('id', ParseUuidPipe) id: string) {
-    return this.modulesService.remove(id);
+  remove(@Param('id', ParseUuidPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.modulesService.remove(id, user);
   }
 
   @Roles(Role.ADMIN, Role.INSTRUCTOR)

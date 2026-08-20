@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import type { Request } from 'express';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { PolicyService } from '../../policy/policy.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { toAuthenticatedUser } from '../types/authenticated-user';
 
@@ -23,6 +24,7 @@ export class JwtRefreshStrategy extends PassportStrategy(
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly policyService: PolicyService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([extractFromCookie]),
@@ -38,9 +40,14 @@ export class JwtRefreshStrategy extends PassportStrategy(
     if (!user || !user.active) {
       throw new UnauthorizedException('User not found or inactive');
     }
+    // Re-resolved on every refresh, not carried over from the old access
+    // token — a rejection/revocation that happened since the last refresh
+    // must show up in the very next minted access token's accessState.
+    const accessState = await this.policyService.resolveAccessState(user.id, user.active);
     return toAuthenticatedUser(
       user,
       this.configService.get<string>('storage.publicUrl')!,
+      accessState,
     );
   }
 }

@@ -73,7 +73,7 @@ export class ProfileService {
           ...(emailChanging && { email: normalizedEmail }),
         },
       });
-      return toAuthenticatedUser(updated, this.publicUrl());
+      return toAuthenticatedUser(updated, this.publicUrl(), actor.accessState);
     } catch (error) {
       throw mapUniqueConstraintError(error);
     }
@@ -101,7 +101,7 @@ export class ProfileService {
       where: { id: actor.id },
       data: { passwordHash, mustChangePassword: false },
     });
-    return toAuthenticatedUser(updated, this.publicUrl());
+    return toAuthenticatedUser(updated, this.publicUrl(), actor.accessState);
   }
 
   async presignAvatarUpload(dto: PresignAvatarUploadDto) {
@@ -144,7 +144,7 @@ export class ProfileService {
       await this.storage.delete(current.avatarStorageKey);
     }
 
-    return toAuthenticatedUser(updated, this.publicUrl());
+    return toAuthenticatedUser(updated, this.publicUrl(), actor.accessState);
   }
 
   async removeAvatar(actor: AuthenticatedUser): Promise<AuthenticatedUser> {
@@ -156,7 +156,7 @@ export class ProfileService {
     if (current.avatarStorageKey) {
       await this.storage.delete(current.avatarStorageKey);
     }
-    return toAuthenticatedUser(updated, this.publicUrl());
+    return toAuthenticatedUser(updated, this.publicUrl(), actor.accessState);
   }
 
   private async findOrThrow(id: string) {

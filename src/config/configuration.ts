@@ -30,6 +30,12 @@ export interface AppConfig {
     endpoint: string;
     region: string;
     bucket: string;
+    // optional separate bucket for audit archives — the main bucket has
+    // public r2.dev access enabled for PDFs/videos/avatars, which is wrong
+    // for audit data; falls back to the main bucket (with a startup warning)
+    // if not configured, so this feature doesn't hard-require provisioning a
+    // second bucket just to run
+    auditBucket?: string;
     accessKeyId: string;
     secretAccessKey: string;
     forcePathStyle: boolean;
@@ -40,6 +46,26 @@ export interface AppConfig {
     // absolute or cwd-relative path to the local uploads root — point this at
     // a mounted volume in production/Docker so files survive redeploys
     dir: string;
+  };
+  policy: {
+    reconsiderationDays: number;
+    // an account this old or older is "consolidated" — its rejection never
+    // triggers the short auto-delete flow, only an administrative review
+    // hold (see PolicyService.transitionToRejected)
+    establishedAccountDays: number;
+    reviewHoldDays: number;
+  };
+  audit: {
+    retentionDays: number;
+  };
+  security: {
+    warningAttempts: number;
+    highAttempts: number;
+    criticalAttempts: number;
+    incidentWindowSeconds: number;
+  };
+  emailBlocklist: {
+    hmacKey: string;
   };
 }
 
@@ -75,6 +101,7 @@ export default (): AppConfig => ({
     endpoint: process.env.STORAGE_ENDPOINT as string,
     region: process.env.STORAGE_REGION ?? 'auto',
     bucket: process.env.STORAGE_BUCKET as string,
+    auditBucket: process.env.STORAGE_AUDIT_BUCKET || undefined,
     accessKeyId: process.env.STORAGE_ACCESS_KEY_ID as string,
     secretAccessKey: process.env.STORAGE_SECRET_ACCESS_KEY as string,
     forcePathStyle: (process.env.STORAGE_FORCE_PATH_STYLE ?? 'true') === 'true',
@@ -86,5 +113,37 @@ export default (): AppConfig => ({
   },
   uploads: {
     dir: process.env.UPLOADS_DIR ?? 'uploads',
+  },
+  policy: {
+    reconsiderationDays: parseInt(
+      process.env.POLICY_RECONSIDERATION_DAYS ?? '7',
+      10,
+    ),
+    establishedAccountDays: parseInt(
+      process.env.ESTABLISHED_ACCOUNT_DAYS ?? '90',
+      10,
+    ),
+    reviewHoldDays: parseInt(process.env.POLICY_REVIEW_HOLD_DAYS ?? '30', 10),
+  },
+  audit: {
+    retentionDays: parseInt(process.env.AUDIT_RETENTION_DAYS ?? '30', 10),
+  },
+  security: {
+    warningAttempts: parseInt(
+      process.env.SECURITY_WARNING_ATTEMPTS ?? '3',
+      10,
+    ),
+    highAttempts: parseInt(process.env.SECURITY_HIGH_ATTEMPTS ?? '5', 10),
+    criticalAttempts: parseInt(
+      process.env.SECURITY_CRITICAL_ATTEMPTS ?? '10',
+      10,
+    ),
+    incidentWindowSeconds: parseInt(
+      process.env.SECURITY_INCIDENT_WINDOW_SECONDS ?? '300',
+      10,
+    ),
+  },
+  emailBlocklist: {
+    hmacKey: process.env.EMAIL_BLOCKLIST_HMAC_KEY as string,
   },
 });

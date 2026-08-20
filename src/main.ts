@@ -5,12 +5,17 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
-import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformResponseInterceptor } from './common/interceptors/transform-response.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
+
+  // Exactly one trusted reverse-proxy hop (nginx) in front of this process —
+  // req.ip then resolves safely from X-Forwarded-For instead of trusting
+  // whatever a client sends directly. See getClientIp for the
+  // CF-Connecting-IP preference on top of this.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
   app.use(
     helmet({
@@ -36,7 +41,6 @@ async function bootstrap() {
       transform: true,
     }),
   );
-  app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new TransformResponseInterceptor());
 
   const swaggerConfig = new DocumentBuilder()

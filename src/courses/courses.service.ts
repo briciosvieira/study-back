@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { CourseCoverStorageService } from './course-cover-storage.service';
@@ -24,6 +25,7 @@ export class CoursesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly coverStorage: CourseCoverStorageService,
+    private readonly auditService: AuditService,
   ) {}
 
   findAllForStaff() {
@@ -58,16 +60,26 @@ export class CoursesService {
     return course;
   }
 
-  create(dto: CreateCourseDto, createdById: string) {
-    return this.prisma.course.create({
+  async create(dto: CreateCourseDto, actor: AuthenticatedUser) {
+    const course = await this.prisma.course.create({
       data: {
         title: dto.title,
         description: dto.description,
         about: dto.about,
         targetAudience: dto.targetAudience,
-        createdById,
+        createdById: actor.id,
       },
     });
+    await this.auditService.record({
+      eventType: 'RESOURCE_CREATED',
+      category: 'CONTENT',
+      severity: 'INFO',
+      actorUserId: actor.id,
+      actorName: actor.name,
+      resourceType: 'COURSE',
+      resourceId: course.id,
+    });
+    return course;
   }
 
   async update(id: string, dto: UpdateCourseDto) {
@@ -75,12 +87,21 @@ export class CoursesService {
     return this.prisma.course.update({ where: { id }, data: dto });
   }
 
-  async remove(id: string) {
+  async remove(id: string, actor: AuthenticatedUser) {
     const course = await this.findOrThrow(id);
     await this.prisma.course.delete({ where: { id } });
     if (course.coverUrl) {
       await this.coverStorage.delete(course.coverUrl);
     }
+    await this.auditService.record({
+      eventType: 'RESOURCE_DELETED',
+      category: 'CONTENT',
+      severity: 'INFO',
+      actorUserId: actor.id,
+      actorName: actor.name,
+      resourceType: 'COURSE',
+      resourceId: id,
+    });
     return { deleted: true };
   }
 

@@ -32,7 +32,7 @@ export class TemplateLibraryController {
 
   @Post()
   create(@Body() dto: CreateTemplateDto, @CurrentUser() user: AuthenticatedUser) {
-    return this.templateLibraryService.create(dto, user.id);
+    return this.templateLibraryService.create(dto, user);
   }
 
   @Patch(':id')
@@ -51,7 +51,7 @@ export class TemplateLibraryController {
 
   @Roles(Role.ADMIN)
   @Delete(':id')
-  remove(@Param('id', ParseUuidPipe) id: string) {
-    return this.templateLibraryService.remove(id);
+  remove(@Param('id', ParseUuidPipe) id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.templateLibraryService.remove(id, user);
   }
 }
