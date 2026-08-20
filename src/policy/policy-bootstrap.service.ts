@@ -1,5 +1,10 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  STUDYJA_POLICY_CONTENT,
+  STUDYJA_POLICY_TITLE,
+  STUDYJA_POLICY_VERSION,
+} from './policy-content';
 
 @Injectable()
 export class PolicyBootstrapService implements OnModuleInit {
@@ -8,40 +13,55 @@ export class PolicyBootstrapService implements OnModuleInit {
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
-    const activeVersion = await this.prisma.policyVersion.findFirst({
-      where: { isActive: true },
+    const versionOnePointOne = await this.prisma.policyVersion.findUnique({
+      where: { version: STUDYJA_POLICY_VERSION },
     });
 
-    if (activeVersion) {
+    if (versionOnePointOne?.isActive) {
+      this.logger.log(`Active policy ${versionOnePointOne.version} already present.`);
       return;
     }
 
-    const existingV1 = await this.prisma.policyVersion.findUnique({
-      where: { version: '1.0' },
+    await this.prisma.$transaction(async (tx) => {
+      const activePolicies = await tx.policyVersion.findMany({
+        where: { isActive: true },
+      });
+
+      if (activePolicies.length > 0) {
+        await tx.policyVersion.updateMany({
+          where: { isActive: true },
+          data: { isActive: false },
+        });
+      }
+
+      if (versionOnePointOne) {
+        await tx.policyVersion.update({
+          where: { id: versionOnePointOne.id },
+          data: {
+            title: STUDYJA_POLICY_TITLE,
+            content: STUDYJA_POLICY_CONTENT,
+            isActive: true,
+            requiresReacceptance: true,
+            publishedAt: new Date(),
+          },
+        });
+
+        this.logger.log(`Policy ${STUDYJA_POLICY_VERSION} activated and 1.0 preserved as historical version.`);
+        return;
+      }
+
+      const created = await tx.policyVersion.create({
+        data: {
+          version: STUDYJA_POLICY_VERSION,
+          title: STUDYJA_POLICY_TITLE,
+          content: STUDYJA_POLICY_CONTENT,
+          isActive: true,
+          requiresReacceptance: true,
+          publishedAt: new Date(),
+        },
+      });
+
+      this.logger.log(`Policy ${created.version} published with the official StudyJA content.`);
     });
-
-    if (existingV1) {
-      this.logger.warn(
-        `Policy version ${existingV1.version} exists but is inactive; leaving it unchanged to avoid automatic reactivation.`,
-      );
-      return;
-    }
-
-    const created = await this.prisma.policyVersion.create({
-      data: {
-        version: '1.0',
-        title: 'Política de Uso e Privacidade',
-        content:
-          'Para utilizar o StudyJA, você precisa ler e aceitar esta Política de Uso e Privacidade. ' +
-          'A plataforma utiliza informações necessárias ao funcionamento da conta e das funcionalidades, ' +
-          'incluindo dados cadastrais e registros de segurança. ' +
-          '[Texto de exemplo — um administrador deve revisar e substituir este conteúdo antes do lançamento em produção.]',
-        isActive: true,
-        requiresReacceptance: false,
-        publishedAt: new Date(),
-      },
-    });
-
-    this.logger.log(`Active policy ${created.version} created automatically.`);
   }
 }
