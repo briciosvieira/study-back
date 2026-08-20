@@ -63,6 +63,8 @@ export class CoursesService {
       data: {
         title: dto.title,
         description: dto.description,
+        about: dto.about,
+        targetAudience: dto.targetAudience,
         createdById,
       },
     });

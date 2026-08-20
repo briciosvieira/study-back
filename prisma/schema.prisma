@@ -42,14 +42,16 @@ model User {
 }
 
 model Course {
-  id          String   @id @default(uuid())
-  title       String
-  description String?
-  coverUrl    String?
-  active      Boolean  @default(true)
-  createdById String
-  createdBy   User     @relation("CourseCreator", fields: [createdById], references: [id])
-  createdAt   DateTime @default(now())
+  id             String   @id @default(uuid())
+  title          String
+  description    String?
+  about          String? // long-form "about this course" shown on the overview tab
+  targetAudience String? // who this course is for, shown on the overview tab
+  coverUrl       String?
+  active         Boolean  @default(true)
+  createdById    String
+  createdBy      User     @relation("CourseCreator", fields: [createdById], references: [id])
+  createdAt      DateTime @default(now())
 
   modules      Module[]
   visibilities CourseVisibility[]
