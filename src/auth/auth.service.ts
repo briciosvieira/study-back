@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -28,7 +32,11 @@ export class AuthService {
       where: { OR: [{ email: login }, { username: login }] },
     });
 
-    if (!user || !user.active) {
+    // credentials are checked before the active flag so a wrong password and
+    // a deactivated account both fail identically for anyone who doesn't
+    // already know the real password — only a correct password reveals that
+    // the account itself is the thing blocking access
+    if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -37,7 +45,13 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    return toAuthenticatedUser(user);
+    if (!user.active) {
+      throw new ForbiddenException(
+        'Account deactivated. Contact an administrator.',
+      );
+    }
+
+    return toAuthenticatedUser(user, this.avatarPublicUrl());
   }
 
   issueTokens(user: AuthenticatedUser): TokenPair {
@@ -59,5 +73,9 @@ export class AuthService {
         },
       ),
     };
+  }
+
+  private avatarPublicUrl(): string {
+    return this.configService.get<string>('storage.publicUrl')!;
   }
 }

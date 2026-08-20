@@ -21,7 +21,7 @@ export class JwtRefreshStrategy extends PassportStrategy(
   'jwt-refresh',
 ) {
   constructor(
-    configService: ConfigService,
+    private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
   ) {
     super({
@@ -38,6 +38,9 @@ export class JwtRefreshStrategy extends PassportStrategy(
     if (!user || !user.active) {
       throw new UnauthorizedException('User not found or inactive');
     }
-    return toAuthenticatedUser(user);
+    return toAuthenticatedUser(
+      user,
+      this.configService.get<string>('storage.publicUrl')!,
+    );
   }
 }

@@ -1,4 +1,5 @@
 import { Role, User } from '@prisma/client';
+import { buildAvatarUrl } from '../../common/utils/avatar-url.util';
 
 export interface AuthenticatedUser {
   id: string;
@@ -7,9 +8,17 @@ export interface AuthenticatedUser {
   username: string;
   role: Role;
   active: boolean;
+  mustChangePassword: boolean;
+  avatarUrl: string | null;
 }
 
-export function toAuthenticatedUser(user: User): AuthenticatedUser {
+// avatarPublicUrl is the same storage.publicUrl config value StorageService
+// uses — plumbed in explicitly so this stays a pure function callable from
+// the passport strategies without pulling in the whole storage module.
+export function toAuthenticatedUser(
+  user: User,
+  avatarPublicUrl: string,
+): AuthenticatedUser {
   return {
     id: user.id,
     name: user.name,
@@ -17,5 +26,7 @@ export function toAuthenticatedUser(user: User): AuthenticatedUser {
     username: user.username,
     role: user.role,
     active: user.active,
+    mustChangePassword: user.mustChangePassword,
+    avatarUrl: buildAvatarUrl(user.avatarStorageKey, avatarPublicUrl),
   };
 }

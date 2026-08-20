@@ -10,10 +10,13 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
+import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { ParseUuidPipe } from '../common/pipes/parse-uuid.pipe';
 import { ListStudentsQueryDto } from '../courses/dto/list-students-query.dto';
 import { AddCoursesDto } from './dto/add-courses.dto';
+import { AdminResetPasswordDto } from './dto/admin-reset-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
@@ -78,8 +81,25 @@ export class UsersController {
   }
 
   @Patch(':id')
-  update(@Param('id', ParseUuidPipe) id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(id, dto);
+  update(
+    @Param('id', ParseUuidPipe) id: string,
+    @Body() dto: UpdateUserDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.usersService.update(id, dto, user);
+  }
+
+  // also open to INSTRUCTOR — UsersService.resetPassword enforces the
+  // instructor-cannot-target-an-admin rule against the target fetched from
+  // the DB, not anything the client sends
+  @Roles(Role.ADMIN, Role.INSTRUCTOR)
+  @Post(':id/reset-password')
+  resetPassword(
+    @Param('id', ParseUuidPipe) id: string,
+    @Body() dto: AdminResetPasswordDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.usersService.resetPassword(id, dto, user);
   }
 
   @Delete(':id')

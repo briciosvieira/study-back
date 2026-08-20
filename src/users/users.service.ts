@@ -1,15 +1,20 @@
 import {
   BadRequestException,
-  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListStudentsQueryDto } from '../courses/dto/list-students-query.dto';
+import { buildAvatarUrl } from '../common/utils/avatar-url.util';
+import { normalizeEmail } from '../common/utils/normalize-email.util';
+import { mapUniqueConstraintError } from '../common/utils/prisma-errors.util';
 import { AddCoursesDto } from './dto/add-courses.dto';
+import { AdminResetPasswordDto } from './dto/admin-reset-password.dto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
@@ -22,6 +27,7 @@ const PUBLIC_USER_SELECT = {
   username: true,
   role: true,
   active: true,
+  avatarStorageKey: true,
   createdAt: true,
 } satisfies Prisma.UserSelect;
 
@@ -35,13 +41,17 @@ const COURSE_SUMMARY_SELECT = {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly configService: ConfigService,
+  ) {}
 
-  findAll() {
-    return this.prisma.user.findMany({
+  async findAll() {
+    const users = await this.prisma.user.findMany({
       select: PUBLIC_USER_SELECT,
       orderBy: { createdAt: 'desc' },
     });
+    return users.map((user) => this.toPublicUser(user));
   }
 
   async findOne(id: string) {
@@ -52,7 +62,7 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    return user;
+    return this.toPublicUser(user);
   }
 
   // Courses this user currently has access to — same CourseVisibility
@@ -147,6 +157,7 @@ export class UsersService {
           name: true,
           email: true,
           username: true,
+          avatarStorageKey: true,
           _count: { select: { visibilities: true } },
           visibilities: {
             take: 2,
@@ -160,12 +171,14 @@ export class UsersService {
       }),
     ]);
 
+    const avatarBaseUrl = this.configService.get<string>('storage.publicUrl')!;
     return {
       items: users.map((user) => ({
         id: user.id,
         name: user.name,
         email: user.email,
         username: user.username,
+        avatarUrl: buildAvatarUrl(user.avatarStorageKey, avatarBaseUrl),
         totalCourses: user._count.visibilities,
         courses: user.visibilities.map((v) => v.course),
       })),
@@ -178,27 +191,47 @@ export class UsersService {
   async create(dto: CreateUserDto) {
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
     try {
-      return await this.prisma.user.create({
+      const user = await this.prisma.user.create({
         data: {
           name: dto.name,
-          email: dto.email,
+          email: normalizeEmail(dto.email),
           username: dto.username,
           role: dto.role,
           passwordHash,
         },
         select: PUBLIC_USER_SELECT,
       });
+      return this.toPublicUser(user);
     } catch (error) {
-      throw this.mapUniqueConstraintError(error);
+      throw mapUniqueConstraintError(error);
     }
   }
 
-  async update(id: string, dto: UpdateUserDto) {
-    await this.findOneOrThrow(id);
+  // actor is the ADMIN making the call — required to enforce "can't
+  // deactivate yourself" / "can't deactivate the last active admin" only
+  // when active is actually being flipped to false.
+  async update(id: string, dto: UpdateUserDto, actor: AuthenticatedUser) {
+    const target = await this.findOneOrThrow(id);
+
+    if (dto.active === false && target.active) {
+      if (target.id === actor.id) {
+        throw new ForbiddenException('You cannot deactivate your own account');
+      }
+      if (target.role === Role.ADMIN) {
+        const activeAdmins = await this.prisma.user.count({
+          where: { role: Role.ADMIN, active: true },
+        });
+        if (activeAdmins <= 1) {
+          throw new ForbiddenException(
+            'Cannot deactivate the last active admin',
+          );
+        }
+      }
+    }
 
     const data: Prisma.UserUpdateInput = {
       name: dto.name,
-      email: dto.email,
+      email: dto.email !== undefined ? normalizeEmail(dto.email) : undefined,
       username: dto.username,
       role: dto.role,
       active: dto.active,
@@ -208,14 +241,40 @@ export class UsersService {
     }
 
     try {
-      return await this.prisma.user.update({
+      const user = await this.prisma.user.update({
         where: { id },
         data,
         select: PUBLIC_USER_SELECT,
       });
+      return this.toPublicUser(user);
     } catch (error) {
-      throw this.mapUniqueConstraintError(error);
+      throw mapUniqueConstraintError(error);
     }
+  }
+
+  // Admin-or-instructor administrative reset — never requires the target's
+  // old password. Role check is against the TARGET fetched from the DB, not
+  // anything the client claims, so this can't be bypassed by calling the API
+  // directly.
+  async resetPassword(
+    id: string,
+    dto: AdminResetPasswordDto,
+    actor: AuthenticatedUser,
+  ) {
+    const target = await this.findOneOrThrow(id);
+
+    if (actor.role === Role.INSTRUCTOR && target.role === Role.ADMIN) {
+      throw new ForbiddenException(
+        'Instructors cannot reset an admin password',
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, SALT_ROUNDS);
+    await this.prisma.user.update({
+      where: { id },
+      data: { passwordHash, mustChangePassword: true },
+    });
+    return { reset: true };
   }
 
   async remove(id: string) {
@@ -235,14 +294,16 @@ export class UsersService {
     return user;
   }
 
-  private mapUniqueConstraintError(error: unknown) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === 'P2002'
-    ) {
-      const target = (error.meta?.target as string[] | undefined)?.join(', ');
-      return new ConflictException(`${target ?? 'Field'} already in use`);
-    }
-    return error;
+  private toPublicUser<T extends { avatarStorageKey: string | null }>(
+    user: T,
+  ): Omit<T, 'avatarStorageKey'> & { avatarUrl: string | null } {
+    const { avatarStorageKey, ...rest } = user;
+    return {
+      ...rest,
+      avatarUrl: buildAvatarUrl(
+        avatarStorageKey,
+        this.configService.get<string>('storage.publicUrl')!,
+      ),
+    };
   }
 }
