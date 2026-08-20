@@ -35,6 +35,7 @@ export class ModulesService {
         type: dto.type,
         title: dto.title,
         coverUrl: dto.coverUrl,
+        studyPriority: dto.studyPriority,
       },
     });
   }
@@ -48,6 +49,7 @@ export class ModulesService {
         title: dto.title,
         coverUrl: dto.coverUrl,
         order: dto.order,
+        studyPriority: dto.studyPriority,
       },
     });
   }

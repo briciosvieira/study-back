@@ -11,6 +11,13 @@ export interface StorageProvider {
     contentType: string;
   }): Promise<PresignedUpload>;
 
+  // Temporary GET URL that serves the object under a friendly filename
+  // (Content-Disposition), instead of forcing a download of the raw storage key.
+  presignDownload(params: {
+    key: string;
+    downloadFileName: string;
+  }): Promise<string>;
+
   objectExists(key: string): Promise<boolean>;
 
   delete(key: string): Promise<void>;

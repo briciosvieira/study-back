@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -59,6 +60,20 @@ export class StorageService implements StorageProvider {
     });
 
     return { uploadUrl, key, publicUrl: this.getPublicUrl(key) };
+  }
+
+  async presignDownload(params: {
+    key: string;
+    downloadFileName: string;
+  }): Promise<string> {
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: params.key,
+      ResponseContentDisposition: `attachment; filename="${sanitizeFileName(params.downloadFileName)}"`,
+    });
+    return getSignedUrl(this.client, command, {
+      expiresIn: this.presignExpiresSec,
+    });
   }
 
   async objectExists(key: string): Promise<boolean> {

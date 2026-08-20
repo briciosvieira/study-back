@@ -2,6 +2,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { resolve } from 'path';
@@ -15,6 +16,8 @@ import { PdfModule } from './pdf/pdf.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { QuizModule } from './quiz/quiz.module';
 import { StorageModule } from './storage/storage.module';
+import { StudyScheduleModule } from './study-schedule/study-schedule.module';
+import { TemplateLibraryModule } from './template-library/template-library.module';
 import { UsersModule } from './users/users.module';
 import { VideoModule } from './video/video.module';
 
@@ -25,6 +28,7 @@ import { VideoModule } from './video/video.module';
       load: [configuration],
       validationSchema,
     }),
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],
       useFactory: () => ({
@@ -65,6 +69,8 @@ import { VideoModule } from './video/video.module';
     PdfModule,
     VideoModule,
     QuizModule,
+    StudyScheduleModule,
+    TemplateLibraryModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

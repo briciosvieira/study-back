@@ -24,6 +24,11 @@ enum QuizAttemptStatus {
   COMPLETED
 }
 
+enum StudySessionStatus {
+  IN_PROGRESS
+  COMPLETED
+}
+
 model User {
   id           String   @id @default(uuid())
   name         String
@@ -34,9 +39,11 @@ model User {
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
 
-  coursesCreated Course[]           @relation("CourseCreator")
-  visibilities   CourseVisibility[]
-  attempts       QuizAttempt[]
+  coursesCreated    Course[]              @relation("CourseCreator")
+  visibilities      CourseVisibility[]
+  attempts          QuizAttempt[]
+  studySessions     StudySession[]
+  uploadedTemplates TemplateLibraryFile[]
 
   @@map("users")
 }
@@ -53,8 +60,9 @@ model Course {
   createdBy      User     @relation("CourseCreator", fields: [createdById], references: [id])
   createdAt      DateTime @default(now())
 
-  modules      Module[]
-  visibilities CourseVisibility[]
+  modules       Module[]
+  visibilities  CourseVisibility[]
+  studySessions StudySession[]
 
   @@map("courses")
 }
@@ -77,20 +85,22 @@ model CourseVisibility {
 }
 
 model Module {
-  id        String     @id @default(uuid())
-  courseId  String
-  course    Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
-  type      ModuleType
-  title     String
-  coverUrl  String?
-  visible   Boolean    @default(true)
-  order     Float      @default(0) // orders modules within a course
-  createdAt DateTime   @default(now())
+  id            String     @id @default(uuid())
+  courseId      String
+  course        Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  type          ModuleType
+  title         String
+  coverUrl      String?
+  visible       Boolean    @default(true)
+  order         Float      @default(0) // orders modules within a course
+  studyPriority Int        @default(3) // 1 (low) - 5 (high), feeds the study-schedule recommendation score
+  createdAt     DateTime   @default(now())
 
-  pdfItems   PdfItem[]
-  videoItems VideoItem[]
-  questions  Question[]
-  attempts   QuizAttempt[]
+  pdfItems      PdfItem[]
+  videoItems    VideoItem[]
+  questions     Question[]
+  attempts      QuizAttempt[]
+  studySessions StudySession[]
 
   @@map("modules")
 }
@@ -203,4 +213,52 @@ model AttemptAnswer {
 
   @@unique([attemptId, questionId])
   @@map("attempt_answers")
+}
+
+// One in-progress-or-completed study "block" of time a user spends on a
+// single module. Strictly individual (never shared/aggregated across users)
+// and short-lived by design: COMPLETED rows older than 14 days are purged by
+// StudySessionRetentionService — this table is a rolling recent-activity log,
+// not a permanent record (unlike QuizAttempt/QuizResult, which are kept forever).
+model StudySession {
+  id              String             @id @default(uuid())
+  userId          String
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseId        String
+  course          Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  moduleId        String
+  module          Module             @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  status          StudySessionStatus @default(IN_PROGRESS)
+  startedAt       DateTime           @default(now())
+  endedAt         DateTime?
+  durationSeconds Int?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, courseId])
+  @@index([status, endedAt])
+  @@map("study_sessions")
+}
+
+// Reusable administrative files (quiz-import templates, and generically any
+// other doc/csv/json/pdf/docx an admin/instructor wants available to
+// download again later) — stored in the same R2 bucket as course content but
+// under a separate key prefix, with its own model/endpoints/permissions so it
+// never mixes with educational Course PDFs.
+model TemplateLibraryFile {
+  id           String   @id @default(uuid())
+  name         String
+  description  String?
+  originalName String
+  storageKey   String
+  mimeType     String
+  fileSize     Int
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([createdAt])
+  @@map("template_library_files")
 }
