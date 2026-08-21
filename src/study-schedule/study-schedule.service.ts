@@ -5,14 +5,29 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ModuleType } from '@prisma/client';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { CoursesService } from '../courses/courses.service';
 import { ContentAccessService } from '../modules/content-access.service';
+import { ModulesService } from '../modules/modules.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { STUDY_SESSION_RETENTION_DAYS } from './study-recommendation.constants';
 import { StudyRecommendationService } from './study-recommendation.service';
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+// A studyable unit for the "Iniciar sessão de estudo" picker and the
+// recommendation cards — never the module/folder itself. QUIZ has no
+// sub-items in the current schema (a QuizAttempt is already scoped to the
+// whole module), so the module IS the resource there; PDF/VIDEO resolve
+// down to the individual PdfItem/VideoItem.
+export interface StudyResource {
+  resourceType: 'PDF' | 'VIDEO' | 'QUIZ';
+  resourceId: string;
+  resourceTitle: string;
+  moduleId: string;
+  moduleTitle: string;
+}
 
 @Injectable()
 export class StudyScheduleService {
@@ -20,8 +35,75 @@ export class StudyScheduleService {
     private readonly prisma: PrismaService,
     private readonly coursesService: CoursesService,
     private readonly contentAccess: ContentAccessService,
+    private readonly modulesService: ModulesService,
     private readonly recommendationService: StudyRecommendationService,
   ) {}
+
+  // Everything selectable in the "Iniciar sessão de estudo" dialog — reuses
+  // ModulesService.findAllForCourse for the exact same access/visibility
+  // rules already enforced everywhere else (course access check + hides
+  // non-visible modules from students), instead of re-querying modules here.
+  async listStudyResources(courseId: string, user: AuthenticatedUser): Promise<StudyResource[]> {
+    const modules = await this.modulesService.findAllForCourse(courseId, user);
+    const moduleById = new Map(modules.map((m) => [m.id, m]));
+
+    const pdfModuleIds = modules.filter((m) => m.type === ModuleType.PDF).map((m) => m.id);
+    const videoModuleIds = modules.filter((m) => m.type === ModuleType.VIDEO).map((m) => m.id);
+
+    const [pdfItems, videoItems] = await Promise.all([
+      pdfModuleIds.length
+        ? this.prisma.pdfItem.findMany({
+            where: { moduleId: { in: pdfModuleIds } },
+            orderBy: { orderNum: 'asc' },
+          })
+        : Promise.resolve([]),
+      videoModuleIds.length
+        ? this.prisma.videoItem.findMany({
+            where: { moduleId: { in: videoModuleIds } },
+            orderBy: { orderNum: 'asc' },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const resources: StudyResource[] = [];
+
+    for (const item of pdfItems) {
+      const mod = moduleById.get(item.moduleId);
+      if (!mod) continue;
+      resources.push({
+        resourceType: 'PDF',
+        resourceId: item.id,
+        resourceTitle: item.title,
+        moduleId: mod.id,
+        moduleTitle: mod.title,
+      });
+    }
+
+    for (const mod of modules) {
+      if (mod.type !== ModuleType.QUIZ) continue;
+      resources.push({
+        resourceType: 'QUIZ',
+        resourceId: mod.id,
+        resourceTitle: mod.title,
+        moduleId: mod.id,
+        moduleTitle: mod.title,
+      });
+    }
+
+    for (const item of videoItems) {
+      const mod = moduleById.get(item.moduleId);
+      if (!mod) continue;
+      resources.push({
+        resourceType: 'VIDEO',
+        resourceId: item.id,
+        resourceTitle: item.title,
+        moduleId: mod.id,
+        moduleTitle: mod.title,
+      });
+    }
+
+    return resources;
+  }
 
   async getSchedule(courseId: string, user: AuthenticatedUser) {
     // throws NotFoundException if the course doesn't exist or isn't visible to this user
@@ -34,6 +116,8 @@ export class StudyScheduleService {
       include: {
         module: { select: { id: true, title: true, type: true } },
         course: { select: { id: true, title: true } },
+        pdfItem: { select: { title: true } },
+        videoItem: { select: { title: true } },
       },
     });
 
@@ -45,7 +129,11 @@ export class StudyScheduleService {
         status: 'COMPLETED',
         endedAt: { gte: windowStart },
       },
-      include: { module: { select: { id: true, title: true, type: true } } },
+      include: {
+        module: { select: { id: true, title: true, type: true } },
+        pdfItem: { select: { title: true } },
+        videoItem: { select: { title: true } },
+      },
       orderBy: { endedAt: 'desc' },
     });
 
@@ -73,6 +161,7 @@ export class StudyScheduleService {
             courseId: activeSession.courseId,
             courseTitle: activeSession.course.title,
             startedAt: activeSession.startedAt,
+            ...this.resolveSessionResource(activeSession),
           }
         : null,
       summary,
@@ -160,11 +249,33 @@ export class StudyScheduleService {
     });
   }
 
+  // Old sessions have neither pdfItem nor videoItem (moduleId-only, per the
+  // backward-compatibility requirement) — resourceTitle/resourceType then
+  // just fall back to the module itself, exactly like before this fix.
+  private resolveSessionResource(session: {
+    module: { type: string; title: string };
+    pdfItem: { title: string } | null;
+    videoItem: { title: string } | null;
+  }) {
+    if (session.pdfItem) {
+      return { resourceType: 'PDF' as const, resourceTitle: session.pdfItem.title };
+    }
+    if (session.videoItem) {
+      return { resourceType: 'VIDEO' as const, resourceTitle: session.videoItem.title };
+    }
+    if (session.module.type === 'QUIZ') {
+      return { resourceType: 'QUIZ' as const, resourceTitle: session.module.title };
+    }
+    return { resourceType: null, resourceTitle: session.module.title };
+  }
+
   private groupByDay(
     sessions: Array<{
       id: string;
       moduleId: string;
       module: { title: string; type: string };
+      pdfItem: { title: string } | null;
+      videoItem: { title: string } | null;
       startedAt: Date;
       endedAt: Date | null;
       durationSeconds: number | null;
@@ -191,6 +302,7 @@ export class StudyScheduleService {
           startedAt: s.startedAt,
           endedAt: s.endedAt,
           durationSeconds: s.durationSeconds,
+          ...this.resolveSessionResource(s),
         })),
       }));
   }

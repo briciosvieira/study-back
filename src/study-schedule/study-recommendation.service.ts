@@ -17,11 +17,12 @@ export interface StudyRecommendation {
   daysSinceLastStudy: number | null;
   quizPercentage: number | null;
   studyPriority: number;
-  // The individual PDF/VIDEO to study, resolved within the recommended
-  // module — null for QUIZ (no sub-item) or a PDF/VIDEO module with no
-  // items yet. The module itself stays the scoring unit; this only refines
-  // *which* resource inside it should be opened.
-  resourceType: 'PDF' | 'VIDEO' | null;
+  // The actual studyable unit — an individual PDF/VIDEO resolved within the
+  // module, or the QUIZ module itself (a QuizAttempt is already scoped to
+  // the whole module, so there's no smaller unit to resolve to). Null only
+  // for a PDF/VIDEO module with no items yet. The module stays the scoring
+  // unit; this only names *what* should actually be opened.
+  resourceType: 'PDF' | 'VIDEO' | 'QUIZ' | null;
   resourceId: string | null;
   resourceTitle: string | null;
 }
@@ -173,11 +174,18 @@ export class StudyRecommendationService {
     scored.sort((a, b) => b.score - a.score);
 
     return scored.slice(0, limit).map(({ module: mod, stats, reason }) => {
-      let resourceType: 'PDF' | 'VIDEO' | null = null;
+      let resourceType: 'PDF' | 'VIDEO' | 'QUIZ' | null = null;
       let resourceId: string | null = null;
       let resourceTitle: string | null = null;
 
-      if (mod.type === ModuleType.PDF) {
+      if (mod.type === ModuleType.QUIZ) {
+        // No sub-grouping for questions in the current schema — a
+        // QuizAttempt is already scoped to the whole module, so the module
+        // itself IS the resource here, same id both ways.
+        resourceType = 'QUIZ';
+        resourceId = mod.id;
+        resourceTitle = mod.title;
+      } else if (mod.type === ModuleType.PDF) {
         const item = this.resolveResource(
           pdfItemsByModule.get(mod.id) ?? [],
           sessionsByModule.get(mod.id) ?? [],

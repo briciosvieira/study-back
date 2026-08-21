@@ -22,6 +22,16 @@ export class StudyScheduleController {
     return this.studyScheduleService.getSchedule(courseId, user);
   }
 
+  // Feeds the "Iniciar sessão de estudo" picker — individual PDFs/videos and
+  // quiz modules, never a bare module/folder as a selectable option.
+  @Get('courses/:courseId/study-resources')
+  listStudyResources(
+    @Param('courseId', ParseUuidPipe) courseId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.studyScheduleService.listStudyResources(courseId, user);
+  }
+
   @Post('courses/:courseId/study-sessions')
   startSession(
     @Param('courseId', ParseUuidPipe) courseId: string,
