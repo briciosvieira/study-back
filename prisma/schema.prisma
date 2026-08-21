@@ -330,6 +330,8 @@ model PdfItem {
   orderNum   Float // 1.0, 1.1, 2.0 — used for ORDER BY
   createdAt  DateTime @default(now())
 
+  studySessions StudySession[]
+
   @@index([moduleId, orderNum])
   @@map("pdf_items")
 }
@@ -345,6 +347,8 @@ model VideoItem {
   orderLabel  String
   orderNum    Float
   createdAt   DateTime @default(now())
+
+  studySessions StudySession[]
 
   @@index([moduleId, orderNum])
   @@map("video_items")
@@ -441,6 +445,13 @@ model StudySession {
   course          Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
   moduleId        String
   module          Module             @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  // Optional individual resource within the module — nullable so existing
+  // rows (and QUIZ-type sessions, which have no sub-item) stay valid as-is.
+  // SetNull so deleting a PdfItem/VideoItem later never breaks a past session.
+  pdfItemId       String?
+  pdfItem         PdfItem?           @relation(fields: [pdfItemId], references: [id], onDelete: SetNull)
+  videoItemId     String?
+  videoItem       VideoItem?         @relation(fields: [videoItemId], references: [id], onDelete: SetNull)
   status          StudySessionStatus @default(IN_PROGRESS)
   startedAt       DateTime           @default(now())
   endedAt         DateTime?

@@ -28,7 +28,13 @@ export class StudyScheduleController {
     @Body() dto: StartStudySessionDto,
     @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.studyScheduleService.startSession(courseId, dto.moduleId, user);
+    return this.studyScheduleService.startSession(
+      courseId,
+      dto.moduleId,
+      user,
+      dto.pdfItemId,
+      dto.videoItemId,
+    );
   }
 
   @Post('study-sessions/:sessionId/finish')

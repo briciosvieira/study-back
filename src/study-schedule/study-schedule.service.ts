@@ -81,11 +81,32 @@ export class StudyScheduleService {
     };
   }
 
-  async startSession(courseId: string, moduleId: string, user: AuthenticatedUser) {
+  async startSession(
+    courseId: string,
+    moduleId: string,
+    user: AuthenticatedUser,
+    pdfItemId?: string,
+    videoItemId?: string,
+  ) {
     await this.coursesService.findOne(courseId, user);
     const targetModule = await this.contentAccess.getAccessibleModule(moduleId, user);
     if (targetModule.courseId !== courseId) {
       throw new BadRequestException('Module does not belong to the given course');
+    }
+
+    // The resource id (when given) must actually belong to this module — an
+    // id from a different module/course must never be trusted from the client.
+    if (pdfItemId) {
+      const pdfItem = await this.prisma.pdfItem.findUnique({ where: { id: pdfItemId } });
+      if (!pdfItem || pdfItem.moduleId !== moduleId) {
+        throw new BadRequestException('pdfItemId does not belong to the given module');
+      }
+    }
+    if (videoItemId) {
+      const videoItem = await this.prisma.videoItem.findUnique({ where: { id: videoItemId } });
+      if (!videoItem || videoItem.moduleId !== moduleId) {
+        throw new BadRequestException('videoItemId does not belong to the given module');
+      }
     }
 
     const existing = await this.prisma.studySession.findFirst({
@@ -105,6 +126,8 @@ export class StudyScheduleService {
         userId: user.id,
         courseId,
         moduleId,
+        pdfItemId: pdfItemId ?? null,
+        videoItemId: videoItemId ?? null,
         startedAt: new Date(),
         status: 'IN_PROGRESS',
       },

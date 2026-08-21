@@ -17,6 +17,13 @@ export interface StudyRecommendation {
   daysSinceLastStudy: number | null;
   quizPercentage: number | null;
   studyPriority: number;
+  // The individual PDF/VIDEO to study, resolved within the recommended
+  // module — null for QUIZ (no sub-item) or a PDF/VIDEO module with no
+  // items yet. The module itself stays the scoring unit; this only refines
+  // *which* resource inside it should be opened.
+  resourceType: 'PDF' | 'VIDEO' | null;
+  resourceId: string | null;
+  resourceTitle: string | null;
 }
 
 interface ModuleStudyStats {
@@ -55,7 +62,13 @@ export class StudyRecommendationService {
     // are, in practice, the same query.
     const sessions = await this.prisma.studySession.findMany({
       where: { userId, courseId, status: 'COMPLETED' },
-      select: { moduleId: true, endedAt: true, durationSeconds: true },
+      select: {
+        moduleId: true,
+        endedAt: true,
+        durationSeconds: true,
+        pdfItemId: true,
+        videoItemId: true,
+      },
     });
 
     const sessionsByModule = new Map<string, typeof sessions>();
@@ -63,6 +76,41 @@ export class StudyRecommendationService {
       const bucket = sessionsByModule.get(session.moduleId) ?? [];
       bucket.push(session);
       sessionsByModule.set(session.moduleId, bucket);
+    }
+
+    // Only fetched for modules that actually need item-level resolution
+    // (PDF/VIDEO) — QUIZ modules keep working exactly as before.
+    const pdfModuleIds = modules.filter((m) => m.type === ModuleType.PDF).map((m) => m.id);
+    const videoModuleIds = modules.filter((m) => m.type === ModuleType.VIDEO).map((m) => m.id);
+
+    const [pdfItems, videoItems] = await Promise.all([
+      pdfModuleIds.length
+        ? this.prisma.pdfItem.findMany({
+            where: { moduleId: { in: pdfModuleIds } },
+            orderBy: { orderNum: 'asc' },
+            select: { id: true, moduleId: true, title: true },
+          })
+        : Promise.resolve([]),
+      videoModuleIds.length
+        ? this.prisma.videoItem.findMany({
+            where: { moduleId: { in: videoModuleIds } },
+            orderBy: { orderNum: 'asc' },
+            select: { id: true, moduleId: true, title: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const pdfItemsByModule = new Map<string, typeof pdfItems>();
+    for (const item of pdfItems) {
+      const bucket = pdfItemsByModule.get(item.moduleId) ?? [];
+      bucket.push(item);
+      pdfItemsByModule.set(item.moduleId, bucket);
+    }
+    const videoItemsByModule = new Map<string, typeof videoItems>();
+    for (const item of videoItems) {
+      const bucket = videoItemsByModule.get(item.moduleId) ?? [];
+      bucket.push(item);
+      videoItemsByModule.set(item.moduleId, bucket);
     }
 
     const quizModuleIds = modules
@@ -124,15 +172,82 @@ export class StudyRecommendationService {
 
     scored.sort((a, b) => b.score - a.score);
 
-    return scored.slice(0, limit).map(({ module: mod, stats, reason }) => ({
-      moduleId: mod.id,
-      title: mod.title,
-      type: mod.type,
-      reason,
-      daysSinceLastStudy: stats.daysSinceLastStudy,
-      quizPercentage: stats.lastQuizPercentage,
-      studyPriority: mod.studyPriority,
-    }));
+    return scored.slice(0, limit).map(({ module: mod, stats, reason }) => {
+      let resourceType: 'PDF' | 'VIDEO' | null = null;
+      let resourceId: string | null = null;
+      let resourceTitle: string | null = null;
+
+      if (mod.type === ModuleType.PDF) {
+        const item = this.resolveResource(
+          pdfItemsByModule.get(mod.id) ?? [],
+          sessionsByModule.get(mod.id) ?? [],
+          (s) => s.pdfItemId,
+        );
+        if (item) {
+          resourceType = 'PDF';
+          resourceId = item.id;
+          resourceTitle = item.title;
+        }
+      } else if (mod.type === ModuleType.VIDEO) {
+        const item = this.resolveResource(
+          videoItemsByModule.get(mod.id) ?? [],
+          sessionsByModule.get(mod.id) ?? [],
+          (s) => s.videoItemId,
+        );
+        if (item) {
+          resourceType = 'VIDEO';
+          resourceId = item.id;
+          resourceTitle = item.title;
+        }
+      }
+
+      return {
+        moduleId: mod.id,
+        title: mod.title,
+        type: mod.type,
+        reason,
+        daysSinceLastStudy: stats.daysSinceLastStudy,
+        quizPercentage: stats.lastQuizPercentage,
+        studyPriority: mod.studyPriority,
+        resourceType,
+        resourceId,
+        resourceTitle,
+      };
+    });
+  }
+
+  // Which individual item within a PDF/VIDEO module to recommend, given the
+  // module was already picked by the existing module-level score. Mirrors
+  // the same "never studied first, then longest since studied" bias the
+  // module scoring already uses, just one level down — never studied wins
+  // (in the module's own display order), otherwise the least-recently
+  // completed item wins. Falls back to the first item in order when no
+  // item-level history exists yet (e.g. right after this migration).
+  private resolveResource<TItem extends { id: string; title: string }>(
+    items: TItem[],
+    moduleSessions: Array<{ endedAt: Date | null; pdfItemId?: string | null; videoItemId?: string | null }>,
+    getItemId: (session: { pdfItemId?: string | null; videoItemId?: string | null }) => string | null | undefined,
+  ): TItem | null {
+    if (items.length === 0) return null;
+
+    const lastEndedByItem = new Map<string, Date>();
+    for (const session of moduleSessions) {
+      const itemId = getItemId(session);
+      if (!itemId || !session.endedAt) continue;
+      const current = lastEndedByItem.get(itemId);
+      if (!current || session.endedAt > current) {
+        lastEndedByItem.set(itemId, session.endedAt);
+      }
+    }
+
+    const neverStudied = items.find((item) => !lastEndedByItem.has(item.id));
+    if (neverStudied) return neverStudied;
+
+    return items.reduce((oldest, item) => {
+      const oldestEndedAt = lastEndedByItem.get(oldest.id)!;
+      const itemEndedAt = lastEndedByItem.get(item.id)!;
+      return itemEndedAt < oldestEndedAt ? item : oldest;
+    }, items[0]);
   }
 
   private scoreModule(studyPriority: number, stats: ModuleStudyStats): number {
