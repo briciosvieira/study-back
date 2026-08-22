@@ -63,6 +63,8 @@ model User {
   studySessions     StudySession[]
   uploadedTemplates TemplateLibraryFile[]
   policyAcceptances UserPolicyAcceptance[]
+  studyTreesCreated StudyTree[]            @relation("StudyTreeCreator")
+  treeChecks        UserTreeCheck[]
 
   @@map("users")
 }
@@ -276,6 +278,7 @@ model Course {
   modules       Module[]
   visibilities  CourseVisibility[]
   studySessions StudySession[]
+  studyTree     StudyTree?
 
   @@map("courses")
 }
@@ -487,4 +490,68 @@ model TemplateLibraryFile {
 
   @@index([createdAt])
   @@map("template_library_files")
+}
+
+// One shared subject map per course (never per-user — see UserTreeCheck for
+// the individual part). @unique on courseId is what enforces "at most one
+// tree per course" at the DB level, not just in application code.
+model StudyTree {
+  id          String   @id @default(uuid())
+  courseId    String   @unique
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  // nullable so a deleted admin account never blocks or orphans the tree
+  // they imported — same reasoning as Course.createdById
+  createdById String?
+  createdBy   User?    @relation("StudyTreeCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+
+  nodes StudyTreeNode[]
+
+  @@map("study_trees")
+}
+
+// Generic recursive hierarchy (parent/children) — deliberately not a fixed
+// subject/topic/subtopic shape, so depth is unlimited. `code` comes straight
+// from the imported spreadsheet's node_code column and is only ever used to
+// resolve parent_code references during import; kept on the row for
+// traceability. A node with no children is a leaf and is the only kind that
+// can carry a UserTreeCheck — enforced in application code (StudyTreeService),
+// not by the schema itself.
+model StudyTreeNode {
+  id       String   @id @default(uuid())
+  treeId   String
+  tree     StudyTree @relation(fields: [treeId], references: [id], onDelete: Cascade)
+  code     String
+  parentId String?
+  parent   StudyTreeNode?  @relation("StudyTreeNodeChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children StudyTreeNode[] @relation("StudyTreeNodeChildren")
+  title    String
+  order    Int      @default(0)
+  createdAt DateTime @default(now())
+
+  checks UserTreeCheck[]
+
+  @@unique([treeId, code])
+  @@index([treeId, parentId])
+  @@map("study_tree_nodes")
+}
+
+// Deliberately temporary, per-user state — NOT a history table. A row only
+// exists while its 5-day window is still running: checking creates it,
+// unchecking or expiring deletes it (see StudyTreeService/
+// StudyTreeCheckCleanupJob). The database never accumulates more rows than
+// there are currently-active checks across all users, regardless of how many
+// times someone has checked/unchecked over time.
+model UserTreeCheck {
+  id        String        @id @default(uuid())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nodeId    String
+  node      StudyTreeNode @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  checkedAt DateTime      @default(now())
+  expiresAt DateTime
+
+  @@unique([userId, nodeId])
+  @@index([expiresAt])
+  @@map("user_tree_checks")
 }

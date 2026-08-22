@@ -71,4 +71,7 @@ export type AuditEventType =
   | 'EMAIL_BLOCKLIST_ADDED'
   | 'EMAIL_BLOCKLIST_REMOVED'
   // audit itself
-  | 'AUDIT_LOG_EXPORTED';
+  | 'AUDIT_LOG_EXPORTED'
+  // study tree — structural changes only, never individual checkbox activity
+  | 'STUDY_TREE_IMPORTED'
+  | 'STUDY_TREE_DELETED';

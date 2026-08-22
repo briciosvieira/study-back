@@ -24,6 +24,7 @@ import { QuizModule } from './quiz/quiz.module';
 import { SecurityModule } from './security/security.module';
 import { StorageModule } from './storage/storage.module';
 import { StudyScheduleModule } from './study-schedule/study-schedule.module';
+import { StudyTreeModule } from './study-tree/study-tree.module';
 import { TemplateLibraryModule } from './template-library/template-library.module';
 import { UsersModule } from './users/users.module';
 import { VideoModule } from './video/video.module';
@@ -82,6 +83,7 @@ import { VideoModule } from './video/video.module';
     VideoModule,
     QuizModule,
     StudyScheduleModule,
+    StudyTreeModule,
     TemplateLibraryModule,
   ],
   controllers: [HealthController],
