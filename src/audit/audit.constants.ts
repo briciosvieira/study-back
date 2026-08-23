@@ -51,6 +51,8 @@ export type AuditEventType =
   | 'PERMISSION_REVOKED'
   // content (generic — see resourceType)
   | 'RESOURCE_CREATED'
+  | 'RESOURCE_UPDATED'
+  | 'RESOURCE_FILE_REPLACED'
   | 'RESOURCE_DELETED'
   // authentication / security
   | 'LOGIN_SUCCEEDED'

@@ -16,6 +16,7 @@ import { ParseUuidPipe } from '../common/pipes/parse-uuid.pipe';
 import { CreatePdfItemDto } from './dto/create-pdf-item.dto';
 import { PresignPdfUploadDto } from './dto/presign-pdf-upload.dto';
 import { ReorderPdfDto } from './dto/reorder-pdf.dto';
+import { UpdatePdfItemDto } from './dto/update-pdf-item.dto';
 import { PdfService } from './pdf.service';
 
 @ApiTags('pdf')
@@ -60,5 +61,27 @@ export class PdfController {
   @Patch('pdf/:id/reorder')
   reorder(@Param('id', ParseUuidPipe) id: string, @Body() dto: ReorderPdfDto) {
     return this.pdfService.reorder(id, dto);
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('pdf/:id/presign-replace')
+  presignReplace(@Param('id', ParseUuidPipe) id: string, @Body() dto: PresignPdfUploadDto) {
+    return this.pdfService.presignReplace(id, dto);
+  }
+
+  @Roles(Role.ADMIN)
+  @Patch('pdf/:id')
+  update(
+    @Param('id', ParseUuidPipe) id: string,
+    @Body() dto: UpdatePdfItemDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.pdfService.update(id, dto, user);
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('pdf/:id/download')
+  getDownloadUrl(@Param('id', ParseUuidPipe) id: string) {
+    return this.pdfService.getDownloadUrl(id);
   }
 }

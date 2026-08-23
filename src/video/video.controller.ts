@@ -16,6 +16,7 @@ import { ParseUuidPipe } from '../common/pipes/parse-uuid.pipe';
 import { CreateVideoItemDto } from './dto/create-video-item.dto';
 import { PresignVideoUploadDto } from './dto/presign-video-upload.dto';
 import { ReorderVideoDto } from './dto/reorder-video.dto';
+import { UpdateVideoItemDto } from './dto/update-video-item.dto';
 import { VideoService } from './video.service';
 
 @ApiTags('video')
@@ -63,5 +64,27 @@ export class VideoController {
     @Body() dto: ReorderVideoDto,
   ) {
     return this.videoService.reorder(id, dto);
+  }
+
+  @Roles(Role.ADMIN)
+  @Post('video/:id/presign-replace')
+  presignReplace(@Param('id', ParseUuidPipe) id: string, @Body() dto: PresignVideoUploadDto) {
+    return this.videoService.presignReplace(id, dto);
+  }
+
+  @Roles(Role.ADMIN)
+  @Patch('video/:id')
+  update(
+    @Param('id', ParseUuidPipe) id: string,
+    @Body() dto: UpdateVideoItemDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.videoService.update(id, dto, user);
+  }
+
+  @Roles(Role.ADMIN)
+  @Get('video/:id/download')
+  getDownloadUrl(@Param('id', ParseUuidPipe) id: string) {
+    return this.videoService.getDownloadUrl(id);
   }
 }

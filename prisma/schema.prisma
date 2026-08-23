@@ -322,16 +322,17 @@ model Module {
 }
 
 model PdfItem {
-  id         String   @id @default(uuid())
-  moduleId   String
-  module     Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
-  title      String
-  fileUrl    String
-  fileKey    String // key in the S3/R2 bucket, used to delete later
-  sizeBytes  BigInt?
-  orderLabel String // "1", "1.1", "2" — shown in the UI
-  orderNum   Float // 1.0, 1.1, 2.0 — used for ORDER BY
-  createdAt  DateTime @default(now())
+  id          String   @id @default(uuid())
+  moduleId    String
+  module      Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  fileUrl     String
+  fileKey     String // key in the S3/R2 bucket, used to delete later
+  sizeBytes   BigInt?
+  orderLabel  String // "1", "1.1", "2" — shown in the UI
+  orderNum    Float // 1.0, 1.1, 2.0 — used for ORDER BY
+  createdAt   DateTime @default(now())
 
   studySessions StudySession[]
 
@@ -344,6 +345,7 @@ model VideoItem {
   moduleId    String
   module      Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   title       String
+  description String?
   fileUrl     String // streaming URL (Cloudflare Stream/Mux) or storage URL
   fileKey     String?
   durationSec Int?
