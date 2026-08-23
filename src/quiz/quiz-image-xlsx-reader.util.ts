@@ -153,9 +153,22 @@ function relsPathFor(path: string): string {
 
 // Resolves an OOXML relative Target (e.g. "../drawings/drawing1.xml")
 // against the directory of the file that referenced it.
-function resolveRelativePath(baseDir: string, relativeTarget: string): string {
+function resolveRelativePath(baseDir: string, target: string): string {
+  // OPC (Open Packaging Conventions) relationship Targets are sometimes
+  // package-ABSOLUTE — a leading "/" means "from the zip root", not
+  // "relative to whatever referenced it". Observed directly in a real
+  // file: both the workbook->worksheet and drawing->media relationships
+  // used absolute targets ("/xl/worksheets/sheet1.xml",
+  // "/xl/media/image1.png") instead of the more common relative form
+  // ("../media/image1.png"). Treating an absolute target as relative
+  // silently resolved to a nonexistent, duplicated path (e.g.
+  // "xl/xl/worksheets/sheet1.xml"), which made every image "not found"
+  // with no error at all.
+  if (target.startsWith('/')) {
+    return target.slice(1);
+  }
   const baseParts = baseDir.replace(/\/$/, '').split('/').filter(Boolean);
-  for (const part of relativeTarget.split('/')) {
+  for (const part of target.split('/')) {
     if (part === '..') baseParts.pop();
     else if (part !== '.' && part !== '') baseParts.push(part);
   }
@@ -230,22 +243,43 @@ interface RawAnchor {
   embedRId: string | null;
 }
 
-// Matches both <xdr:twoCellAnchor> and <xdr:oneCellAnchor> — only the
-// top-left ("from") cell and the embedded image's relationship id are
-// needed; nothing here assumes a "to"/size ever exists.
+// Matches both <xdr:twoCellAnchor>/<xdr:oneCellAnchor> AND their unprefixed
+// forms <twoCellAnchor>/<oneCellAnchor> — only the top-left ("from") cell
+// and the embedded image's relationship id are needed; nothing here
+// assumes a "to"/size ever exists.
+//
+// The "xdr:" prefix is the common convention (bound via
+// xmlns:xdr="...spreadsheetDrawing" on the root <xdr:wsDr> element), but
+// it's just a convention, not a requirement — XML lets any tool declare
+// that same namespace as the DEFAULT (unprefixed) one instead
+// (<wsDr xmlns="...spreadsheetDrawing">), and real files do exactly that
+// (observed directly: a quiz spreadsheet with embedded images produced
+// entirely unprefixed <oneCellAnchor>/<from>/<col>/<row> elements). Every
+// element name below tolerates an optional "prefix:" so both forms match.
+const OPTIONAL_PREFIX = '(?:[a-zA-Z0-9]+:)?';
+
 function extractAnchors(drawingXml: string): RawAnchor[] {
   const anchors: RawAnchor[] = [];
-  const blockRe = /<xdr:(twoCellAnchor|oneCellAnchor)\b[\s\S]*?<\/xdr:\1>/g;
+  const blockRe = new RegExp(
+    `<${OPTIONAL_PREFIX}(twoCellAnchor|oneCellAnchor)\\b[\\s\\S]*?<\\/${OPTIONAL_PREFIX}\\1>`,
+    'g',
+  );
   let blockMatch: RegExpExecArray | null;
   while ((blockMatch = blockRe.exec(drawingXml))) {
     const block = blockMatch[0];
-    const fromBlockMatch = /<xdr:from>([\s\S]*?)<\/xdr:from>/.exec(block);
+    const fromBlockMatch = new RegExp(
+      `<${OPTIONAL_PREFIX}from>([\\s\\S]*?)<\\/${OPTIONAL_PREFIX}from>`,
+    ).exec(block);
     if (!fromBlockMatch) continue;
-    const colMatch = /<xdr:col>(\d+)<\/xdr:col>/.exec(fromBlockMatch[1]);
-    const rowMatch = /<xdr:row>(\d+)<\/xdr:row>/.exec(fromBlockMatch[1]);
+    const colMatch = new RegExp(`<${OPTIONAL_PREFIX}col>(\\d+)<\\/${OPTIONAL_PREFIX}col>`).exec(
+      fromBlockMatch[1],
+    );
+    const rowMatch = new RegExp(`<${OPTIONAL_PREFIX}row>(\\d+)<\\/${OPTIONAL_PREFIX}row>`).exec(
+      fromBlockMatch[1],
+    );
     if (!colMatch || !rowMatch) continue;
 
-    const embedMatch = /<a:blip\b[^>]*\br:embed="([^"]+)"/.exec(block);
+    const embedMatch = new RegExp(`<${OPTIONAL_PREFIX}blip\\b[^>]*\\br:embed="([^"]+)"`).exec(block);
     anchors.push({
       colFrom: Number(colMatch[1]),
       rowFrom: Number(rowMatch[1]),

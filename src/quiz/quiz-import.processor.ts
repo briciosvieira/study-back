@@ -109,7 +109,7 @@ export class QuizImportProcessor extends WorkerHost {
   }
 
   // Maps each data row (1-based, matching worksheet.getRow) to the image(s)
-  // anchored specifically in the "Imagem" column on that row.
+  // anchored on that row, within the question table's column range.
   //
   // Deliberately does NOT use exceljs's own Worksheet.getImages() /
   // Workbook.getImage() — those depend on exceljs's internal drawing
@@ -120,22 +120,32 @@ export class QuizImportProcessor extends WorkerHost {
   // fully reconcile), `workbook.xlsx.load()` throws "Cannot read properties
   // of undefined (reading 'anchors')" from deep inside the library, before
   // ANY of our own code — including a try/catch around getImages() — ever
-  // gets a chance to run. See quiz-import.constants... no: see
-  // quiz-image-xlsx-reader.util.ts for the actual fix: read the same
-  // .xlsx ZIP ourselves, bypassing that code path entirely. This method
-  // itself never throws — a spreadsheet with no images (the overwhelming
-  // majority) simply yields an empty map.
+  // gets a chance to run. See quiz-image-xlsx-reader.util.ts for the actual
+  // fix: read the same .xlsx ZIP ourselves, bypassing that code path
+  // entirely. This method itself never throws — a spreadsheet with no
+  // images (the overwhelming majority) simply yields an empty map.
+  //
+  // Column matching is by RANGE (statementCol..correctCol), not an exact
+  // match on the "Imagem" header's own column index. A human inserting a
+  // picture in Excel rarely lands its anchor on the precise column
+  // boundary of the cell they clicked — real files commonly anchor a few
+  // pixels/columns off from where it visually "looks" placed. Matching
+  // strictly by column silently dropped the image (imageKey stayed null,
+  // no error) for exactly this reason. The row is still what determines
+  // which question the image belongs to; "more than one image per row" is
+  // still rejected below regardless of which column each one landed in.
   private async collectImageCandidatesByRow(
     fileBuffer: Buffer,
-    imageCol: number | null,
+    columns: ParsedColumns,
   ): Promise<Map<number, ImageCandidate[]>> {
     const byRow = new Map<number, ImageCandidate[]>();
-    if (imageCol === null) {
+    if (columns.imageCol === null) {
       this.logger.log('[QUIZ XLSX IMPORT] image column ' + JSON.stringify({ exists: false }));
       return byRow;
     }
     this.logger.log(
-      '[QUIZ XLSX IMPORT] image column ' + JSON.stringify({ exists: true, columnIndex: imageCol }),
+      '[QUIZ XLSX IMPORT] image column ' +
+        JSON.stringify({ exists: true, columnIndex: columns.imageCol }),
     );
 
     let anchors: Awaited<ReturnType<typeof readImageAnchorsFromXlsx>>;
@@ -157,18 +167,27 @@ export class QuizImportProcessor extends WorkerHost {
         JSON.stringify({ hasDrawing: anchors.length > 0, anchorCount: anchors.length }),
     );
 
-    let imageIndex = 0;
+    const minCol = Math.min(columns.statementCol, columns.imageCol);
+    const maxCol = Math.max(columns.correctCol, columns.imageCol);
+
     for (const anchor of anchors) {
+      const detectedExtension = sniffImageFormat(anchor.buffer);
       this.logger.log(
-        '[QUIZ XLSX IMPORT] imagem encontrada ' +
+        '[QUIZ IMAGE] extraída ' +
           JSON.stringify({
-            imageIndex: imageIndex++,
             row: anchor.row,
-            column: anchor.col,
+            extension: detectedExtension ?? 'desconhecida',
             size: anchor.buffer.length,
           }),
       );
-      if (anchor.col !== imageCol) continue;
+
+      if (anchor.row < 2 || anchor.col < minCol || anchor.col > maxCol) {
+        this.logger.log(
+          '[QUIZ XLSX IMPORT] imagem fora do intervalo de colunas da tabela — ignorada ' +
+            JSON.stringify({ row: anchor.row, column: anchor.col, expectedRange: [minCol, maxCol] }),
+        );
+        continue;
+      }
 
       this.logger.log(
         '[QUIZ XLSX IMPORT] imagem mapeada ' +
@@ -262,7 +281,7 @@ export class QuizImportProcessor extends WorkerHost {
       this.logger.log('[QUIZ XLSX IMPORT] headers ' + JSON.stringify(headerValues));
 
       stage = 'read-images';
-      const imagesByRow = await this.collectImageCandidatesByRow(fileBuffer, columns.imageCol);
+      const imagesByRow = await this.collectImageCandidatesByRow(fileBuffer, columns);
 
       stage = 'load-module';
       const targetModule = await this.prisma.module.findUnique({
@@ -372,6 +391,10 @@ export class QuizImportProcessor extends WorkerHost {
               body: imageBuffer,
               contentType: contentTypeForFormat(imageExtension),
             });
+            this.logger.log(
+              '[QUIZ IMAGE] upload concluído ' +
+                JSON.stringify({ row: rowNumber, storageKey: imageKey }),
+            );
           } catch (uploadErr) {
             this.logger.error(
               `[QUIZ XLSX IMPORT] falha ao enviar imagem da linha ${rowNumber} para o storage: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`,
@@ -385,7 +408,7 @@ export class QuizImportProcessor extends WorkerHost {
         }
 
         try {
-          await this.prisma.question.create({
+          const createdQuestion = await this.prisma.question.create({
             data: {
               moduleId,
               statement,
@@ -401,6 +424,17 @@ export class QuizImportProcessor extends WorkerHost {
             },
           });
           imported++;
+          this.logger.log(
+            '[QUIZ IMAGE] question persistida ' +
+              JSON.stringify({
+                questionId: createdQuestion.id,
+                row: rowNumber,
+                imageKey: createdQuestion.imageKey ?? null,
+                imageUrl: createdQuestion.imageKey
+                  ? this.storage.getPublicUrl(createdQuestion.imageKey)
+                  : null,
+              }),
+          );
         } catch (dbErr) {
           // best-effort — never leave an orphaned upload behind just
           // because this one row's DB write failed; the loop still moves on
