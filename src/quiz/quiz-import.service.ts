@@ -43,6 +43,7 @@ export class QuizImportService {
 
     const job = await this.queue.add(QUIZ_IMPORT_JOB, {
       moduleId,
+      fileName: file.originalname,
       fileBase64: file.buffer.toString('base64'),
     });
 

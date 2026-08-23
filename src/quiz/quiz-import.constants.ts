@@ -3,6 +3,7 @@ export const QUIZ_IMPORT_JOB = 'import-questions';
 
 export interface QuizImportJobData {
   moduleId: string;
+  fileName: string;
   fileBase64: string;
 }
 
