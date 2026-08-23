@@ -9,6 +9,7 @@ import { QuizImportService } from './quiz-import.service';
 import { QUIZ_IMPORT_QUEUE } from './quiz-import.constants';
 import { QuestionsController } from './questions.controller';
 import { QuestionsService } from './questions.service';
+import { QuizExportService } from './quiz-export.service';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { QuestionsService } from './questions.service';
     QuizImportService,
     QuizImportProcessor,
     AttemptsService,
+    QuizExportService,
   ],
 })
 export class QuizModule {}

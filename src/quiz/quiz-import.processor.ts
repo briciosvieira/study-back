@@ -3,29 +3,17 @@ import { Job } from 'bullmq';
 import { Workbook, Worksheet } from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import { ImportResult, ImportRowError } from './dto/import-status.dto';
-import { QUIZ_IMPORT_QUEUE, QuizImportJobData } from './quiz-import.constants';
-
-const LETTER_HEADER_REGEX = /^[A-F]$/i;
+import {
+  QUIZ_IMPORT_QUEUE,
+  QUIZ_LETTER_HEADER_REGEX,
+  QuizImportJobData,
+  normalizeQuizText,
+} from './quiz-import.constants';
 
 interface ParsedColumns {
   statementCol: number;
   correctCol: number;
   letterCols: Map<string, number>; // letter -> column index
-}
-
-// Some spreadsheets carry a literal backslash-n (two characters: `\` and
-// `n`) instead of a real line break — Excel/exporting tools sometimes
-// produce this when a cell's line breaks are typed/pasted as escape
-// sequences rather than actual Alt+Enter breaks. Converts both that and a
-// literal `\r\n` into a real `\n`; a cell that already has real line breaks
-// passes through untouched. Never touches internal spacing otherwise —
-// only whitespace at the very ends is trimmed.
-export function normalizeQuizText(value: string): string {
-  return value
-    .replace(/\\r\\n/g, '\n')
-    .replace(/\\n/g, '\n')
-    .replace(/\r\n/g, '\n')
-    .trim();
 }
 
 function cellText(worksheet: Worksheet, row: number, col: number): string {
@@ -51,7 +39,7 @@ function parseColumns(worksheet: Worksheet): ParsedColumns {
       header.toLowerCase() === 'correct'
     ) {
       correctCol = colNumber;
-    } else if (LETTER_HEADER_REGEX.test(header)) {
+    } else if (QUIZ_LETTER_HEADER_REGEX.test(header)) {
       letterCols.set(header.toUpperCase(), colNumber);
     }
   });
