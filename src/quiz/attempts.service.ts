@@ -27,6 +27,38 @@ function sanitizeOption(option: QuestionOption) {
   return { id: option.id, letter: option.letter, text: option.text };
 }
 
+// Deterministic PRNG (mulberry32) seeded from the attempt id, so the
+// question order looks random but is stable across reloads/navigation for
+// the same attempt — reshuffled only when a new attempt is created
+// (start of a fresh quiz, or retry).
+function seedFromString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (Math.imul(31, hash) + value.charCodeAt(i)) | 0;
+  }
+  return hash >>> 0;
+}
+
+function mulberry32(seed: number) {
+  let a = seed;
+  return function rand() {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleForAttempt<T>(items: T[], attemptId: string): T[] {
+  const rand = mulberry32(seedFromString(attemptId));
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
 // Never includes `correct` on any option, or a correct-option reference —
 // this is the only shape allowed to leave the service while an attempt is
 // still IN_PROGRESS.
@@ -287,6 +319,10 @@ export class AttemptsService {
       include: { options: true },
       orderBy: { order: 'asc' },
     });
+    // Presentation order only — shuffled per attempt so the quiz feels
+    // randomized while staying stable for the duration of this attempt.
+    // Scoring, results and the canonical `order` field are unaffected.
+    const shuffledQuestions = shuffleForAttempt(questions, attempt.id);
     const answers = await this.prisma.attemptAnswer.findMany({
       where: { attemptId: attempt.id },
     });
@@ -296,8 +332,8 @@ export class AttemptsService {
       attemptId: attempt.id,
       status: attempt.status,
       startedAt: attempt.startedAt,
-      totalQuestions: questions.length,
-      questions: questions.map((q) =>
+      totalQuestions: shuffledQuestions.length,
+      questions: shuffledQuestions.map((q) =>
         questionView(q, answerByQuestionId.get(q.id)),
       ),
     };
