@@ -1,6 +1,7 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { ModulesModule } from '../modules/modules.module';
+import { StorageModule } from '../storage/storage.module';
 import { AttemptsController } from './attempts.controller';
 import { AttemptsService } from './attempts.service';
 import { QuizImportController } from './quiz-import.controller';
@@ -15,6 +16,7 @@ import { QuizExportService } from './quiz-export.service';
   imports: [
     BullModule.registerQueue({ name: QUIZ_IMPORT_QUEUE }),
     ModulesModule,
+    StorageModule,
   ],
   controllers: [QuestionsController, QuizImportController, AttemptsController],
   providers: [

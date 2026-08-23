@@ -364,6 +364,7 @@ model Question {
   moduleId     String
   module       Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   statement    String
+  imageKey     String? // R2 object key for an optional question image (Excel import) — never a public URL
   timeLimitSec Int      @default(205) // 3min25s
   order        Int      @default(0)
   createdAt    DateTime @default(now())

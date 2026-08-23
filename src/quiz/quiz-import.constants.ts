@@ -10,6 +10,7 @@ export interface QuizImportJobData {
 // the exporter (quiz-export.service.ts) — the file produced by the exporter
 // must always be re-importable through the same header/column layout.
 export const QUIZ_HEADER_STATEMENT = 'Pergunta';
+export const QUIZ_HEADER_IMAGE = 'Imagem'; // optional column — see quiz-image.util.ts
 export const QUIZ_HEADER_CORRECT = 'Correta';
 export const QUIZ_LETTER_HEADER_REGEX = /^[A-F]$/i;
 

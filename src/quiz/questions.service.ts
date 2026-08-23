@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { QuestionOptionDto } from './dto/question-option.dto';
 import { UpdateQuestionDto } from './dto/update-question.dto';
@@ -25,15 +26,22 @@ function validateOptions(options: QuestionOptionDto[]) {
 
 @Injectable()
 export class QuestionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async findAllForModule(moduleId: string) {
     await this.findModuleOrThrow(moduleId);
-    return this.prisma.question.findMany({
+    const questions = await this.prisma.question.findMany({
       where: { moduleId },
       include: { options: true },
       orderBy: { order: 'asc' },
     });
+    return questions.map((question) => ({
+      ...question,
+      imageUrl: question.imageKey ? this.storage.getPublicUrl(question.imageKey) : null,
+    }));
   }
 
   async create(moduleId: string, dto: CreateQuestionDto) {
@@ -91,8 +99,11 @@ export class QuestionsService {
   }
 
   async remove(id: string) {
-    await this.findOrThrow(id);
+    const question = await this.findOrThrow(id);
     await this.prisma.question.delete({ where: { id } });
+    if (question.imageKey) {
+      await this.storage.delete(question.imageKey).catch(() => {});
+    }
     return { deleted: true };
   }
 

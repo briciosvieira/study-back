@@ -3,6 +3,7 @@ import { Workbook } from 'exceljs';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   QUIZ_HEADER_CORRECT,
+  QUIZ_HEADER_IMAGE,
   QUIZ_HEADER_STATEMENT,
   QUIZ_LETTER_HEADER_REGEX,
   toExcelEscapedText,
@@ -26,6 +27,12 @@ function sanitizeFilenamePart(title: string): string {
 // same Excel layout the importer accepts, so the downloaded file can be
 // edited and re-imported without reorganizing columns. Read-only — never
 // touches the database.
+//
+// Known limitation (v1): the "Imagem" column is included in the header for
+// contract consistency, but a question's image is NOT re-embedded into the
+// exported file — the cell is left empty. Re-importing an exported file
+// therefore keeps everything except the image itself (still a valid,
+// non-breaking round trip: an empty Imagem cell is a normal "no image" row).
 @Injectable()
 export class QuizExportService {
   constructor(private readonly prisma: PrismaService) {}
@@ -60,7 +67,13 @@ export class QuizExportService {
     const workbook = new Workbook();
     const worksheet = workbook.addWorksheet('Perguntas');
 
-    worksheet.addRow([QUIZ_HEADER_STATEMENT, ...letters, QUIZ_HEADER_CORRECT]);
+    // The "Imagem" column is always in the header (keeps the header contract
+    // identical to the importer's), but this version never re-embeds the
+    // image bytes into the exported file — see quiz-export.service.ts's
+    // class comment. An empty cell here is a fully valid, re-importable
+    // "no image" row (Situação 2), so nothing breaks on re-import; only the
+    // image itself doesn't survive an export→import round trip yet.
+    worksheet.addRow([QUIZ_HEADER_STATEMENT, QUIZ_HEADER_IMAGE, ...letters, QUIZ_HEADER_CORRECT]);
     worksheet.getRow(1).font = { bold: true };
 
     for (const question of questions) {
@@ -71,6 +84,7 @@ export class QuizExportService {
 
       worksheet.addRow([
         toExcelEscapedText(question.statement),
+        '',
         ...letters.map((letter) => {
           const option = optionByLetter.get(letter);
           return option ? toExcelEscapedText(option.text) : '';

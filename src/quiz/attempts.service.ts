@@ -14,6 +14,7 @@ import {
 import type { AuthenticatedUser } from '../auth/types/authenticated-user';
 import { ContentAccessService } from '../modules/content-access.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { SubmitAnswerDto } from './dto/submit-answer.dto';
 
 type QuestionWithOptions = Question & { options: QuestionOption[] };
@@ -65,10 +66,12 @@ function shuffleForAttempt<T>(items: T[], attemptId: string): T[] {
 function questionView(
   question: QuestionWithOptions,
   answer: AnswerState | undefined,
+  imageUrl: string | null,
 ) {
   return {
     id: question.id,
     statement: question.statement,
+    imageUrl,
     timeLimitSec: question.timeLimitSec,
     position: question.order,
     options: question.options.map(sanitizeOption),
@@ -82,7 +85,12 @@ export class AttemptsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly contentAccess: ContentAccessService,
+    private readonly storage: StorageService,
   ) {}
+
+  private imageUrlFor(question: { imageKey: string | null }): string | null {
+    return question.imageKey ? this.storage.getPublicUrl(question.imageKey) : null;
+  }
 
   async getQuizInfo(moduleId: string, user: AuthenticatedUser) {
     const targetModule = await this.getQuizModule(moduleId, user);
@@ -210,7 +218,7 @@ export class AttemptsService {
       },
     });
 
-    return questionView(question, answer);
+    return questionView(question, answer, this.imageUrlFor(question));
   }
 
   async finish(attemptId: string, user: AuthenticatedUser) {
@@ -334,7 +342,7 @@ export class AttemptsService {
       startedAt: attempt.startedAt,
       totalQuestions: shuffledQuestions.length,
       questions: shuffledQuestions.map((q) =>
-        questionView(q, answerByQuestionId.get(q.id)),
+        questionView(q, answerByQuestionId.get(q.id), this.imageUrlFor(q)),
       ),
     };
   }
