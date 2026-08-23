@@ -67,6 +67,58 @@ export async function readImageAnchorsFromXlsx(buffer: Buffer): Promise<RowImage
   return results;
 }
 
+// Produces a SEPARATE, in-memory copy of the .xlsx with every drawing
+// reference removed — the <drawing r:id="..."/> tag stripped out of the
+// first worksheet's XML, the matching relationship entry removed from that
+// worksheet's .rels, and every xl/drawings/** part deleted outright. This
+// is used ONLY as a fallback so exceljs can still parse cell VALUES when
+// its own drawing-reconciliation code is what's crashing on this
+// particular file (see isKnownDrawingReconcileBug below) — it closes off
+// every code path in exceljs's reconcile() that touches drawings at all,
+// which a narrower fix (e.g. XlsxReadOptions.ignoreNodes) does not fully
+// guarantee, since more than one unguarded `.anchors` access exists inside
+// the library. The user's original buffer is never mutated — this returns
+// a new buffer, and image extraction always reads the ORIGINAL buffer via
+// readImageAnchorsFromXlsx above, never this sanitized copy.
+export async function stripDrawingsForSafeCellParsing(buffer: Buffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(buffer);
+
+  for (const path of Object.keys(zip.files)) {
+    if (path.startsWith('xl/drawings/')) {
+      zip.remove(path);
+    }
+  }
+
+  const sheetPath = await resolveFirstSheetXmlPath(zip);
+  if (sheetPath) {
+    const sheetXml = await readZipText(zip, sheetPath);
+    if (sheetXml) {
+      const strippedSheetXml = sheetXml.replace(/<drawing\b[^>]*\/?>/g, '');
+      if (strippedSheetXml !== sheetXml) {
+        zip.file(sheetPath, strippedSheetXml);
+      }
+    }
+
+    const relsPath = relsPathFor(sheetPath);
+    const relsXml = await readZipText(zip, relsPath);
+    if (relsXml) {
+      const strippedRelsXml = removeRelationshipsByType(relsXml, '/relationships/drawing');
+      if (strippedRelsXml !== relsXml) {
+        zip.file(relsPath, strippedRelsXml);
+      }
+    }
+  }
+
+  return zip.generateAsync({ type: 'nodebuffer' });
+}
+
+function removeRelationshipsByType(relsXml: string, typeSuffix: string): string {
+  return relsXml.replace(/<Relationship\b[^>]*\/?>/g, (tag) => {
+    const typeMatch = /\bType="([^"]+)"/.exec(tag);
+    return typeMatch && typeMatch[1].endsWith(typeSuffix) ? '' : tag;
+  });
+}
+
 async function readZipText(zip: JSZip, path: string): Promise<string | null> {
   const entry = zip.file(path);
   if (!entry) return null;

@@ -19,7 +19,29 @@ import {
   fileExtensionForFormat,
   sniffImageFormat,
 } from './quiz-image.util';
-import { readImageAnchorsFromXlsx } from './quiz-image-xlsx-reader.util';
+import {
+  readImageAnchorsFromXlsx,
+  stripDrawingsForSafeCellParsing,
+} from './quiz-image-xlsx-reader.util';
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const EXCELJS_VERSION: string = require('exceljs/package.json').version;
+
+type LoadStrategy = 'exceljs' | 'xlsx-zip-fallback';
+
+// Narrow, deliberate detector for exceljs's own known-fragile drawing
+// reconciliation bug (workbook.xlsx.load() -> worksheetXform.reconcile()
+// does `options.drawings[name].anchors` — and a sibling spot in xlsx.js's
+// own reconcile() does `model.drawings[name].anchors` — neither guards
+// against that lookup missing). Matches ONLY that specific symptom so a
+// genuinely different/unknown load failure is never silently swallowed —
+// see stage 'load-workbook' in the outer catch for anything else.
+function isKnownDrawingReconcileBug(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false;
+  if (!/Cannot read propert(y|ies) of undefined/i.test(error.message)) return false;
+  if (!/anchors/i.test(error.message)) return false;
+  return /exceljs/i.test(error.stack ?? '');
+}
 
 interface ParsedColumns {
   statementCol: number;
@@ -161,6 +183,47 @@ export class QuizImportProcessor extends WorkerHost {
     return byRow;
   }
 
+  // Loads the workbook for CELL TEXT ONLY (image bytes always come from
+  // readImageAnchorsFromXlsx against the original, untouched buffer —
+  // never from this method's workbook). Tries exceljs normally first
+  // (fast path, correct for the overwhelming majority of files, including
+  // ones that DO have images). Only if exceljs fails with the specific
+  // known drawing-reconciliation bug does this fall back to a sanitized,
+  // in-memory copy of the SAME buffer with every drawing reference removed
+  // — never writes that copy anywhere, and never mutates/persists the
+  // user's original upload. Any other load failure (corrupt file, wrong
+  // format, etc.) propagates untouched — it is never mistaken for the
+  // known bug.
+  private async loadWorkbookSafely(
+    fileBuffer: Buffer,
+  ): Promise<{ workbook: Workbook; loadStrategy: LoadStrategy }> {
+    const workbook = new Workbook();
+    try {
+      // ignoreNodes: ['drawing'] skips the <drawing> reference inside the
+      // worksheet XML while parsing cell text — cheap, harmless defense in
+      // depth even though it alone isn't sufficient for every case (see
+      // isKnownDrawingReconcileBug's comment: exceljs has more than one
+      // unguarded `.anchors` access, not all reachable through this flag).
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      await workbook.xlsx.load(fileBuffer as any, { ignoreNodes: ['drawing'] });
+      return { workbook, loadStrategy: 'exceljs' };
+    } catch (error) {
+      if (!isKnownDrawingReconcileBug(error)) {
+        throw error;
+      }
+      this.logger.warn(
+        `[QUIZ XLSX IMPORT] exceljs falhou ao reconciliar drawings (bug conhecido da lib) — usando leitura via ZIP como fallback seguro: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      const sanitizedBuffer = await stripDrawingsForSafeCellParsing(fileBuffer);
+      const fallbackWorkbook = new Workbook();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      await fallbackWorkbook.xlsx.load(sanitizedBuffer as any, { ignoreNodes: ['drawing'] });
+      return { workbook: fallbackWorkbook, loadStrategy: 'xlsx-zip-fallback' };
+    }
+  }
+
   async process(
     job: Job<QuizImportJobData, ImportResult>,
   ): Promise<ImportResult> {
@@ -170,23 +233,14 @@ export class QuizImportProcessor extends WorkerHost {
     this.logger.log(
       '[QUIZ XLSX IMPORT] início ' + JSON.stringify({ fileName, size: fileBuffer.length }),
     );
+    this.logger.log(
+      '[QUIZ XLSX IMPORT] exceljs-version ' + JSON.stringify({ version: EXCELJS_VERSION }),
+    );
 
     let stage = 'load-workbook';
     try {
-      const workbook = new Workbook();
-      // 1) `ignoreNodes: ['drawing']` tells exceljs to skip the <drawing>
-      //    reference inside the worksheet XML entirely while parsing cell
-      //    text — this is what keeps the buggy reconcile() path (see
-      //    collectImageCandidatesByRow's comment above) from ever running,
-      //    for EVERY file, not just ones that happen to trip it. Cell
-      //    values are completely unaffected: this only skips the drawing
-      //    reference, never rows/cells.
-      // 2) exceljs resolves a stale, differently-shaped ambient `Buffer`
-      //    type (via a nested dependency's older @types/node) than the
-      //    rest of this project — same runtime value, unreconcilable
-      //    typings clash.
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      await workbook.xlsx.load(fileBuffer as any, { ignoreNodes: ['drawing'] });
+      const { workbook, loadStrategy } = await this.loadWorkbookSafely(fileBuffer);
+      this.logger.log('[QUIZ XLSX IMPORT] load strategy ' + JSON.stringify({ loadStrategy }));
       this.logger.log(
         '[QUIZ XLSX IMPORT] workbook ' + JSON.stringify({ worksheets: workbook.worksheets.length }),
       );
